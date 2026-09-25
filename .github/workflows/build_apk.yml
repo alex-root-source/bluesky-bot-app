@@ -27,8 +27,8 @@ jobs:
       - name: Generate Android Skeleton
         run: flutter create . --platforms=android --org=com.bluesky.bot
 
-      - name: Add Required Dependencies
-        run: flutter pub add bluesky atproto_core
+      - name: Add HTTP Package
+        run: flutter pub add http
 
       - name: Get Dependencies
         run: flutter pub get
