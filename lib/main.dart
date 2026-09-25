@@ -1,8 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-
-import 'package:bluesky/bluesky.dart' as bsky;
-import 'package:atproto_core/atproto_core.dart' as atp;
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const BlueskyAutomationApp());
@@ -45,7 +44,8 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   final _handleController = TextEditingController();
   final _appPasswordController = TextEditingController();
 
-  bsky.Bluesky? _bluesky;
+  String? _accessJwt;
+  String? _userDid;
   bool _isLoggedIn = false;
   bool _isAuthenticating = false;
 
@@ -72,6 +72,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     });
   }
 
+  // --- 1. تسجيل الدخول عبر REST API ---
   Future<void> _login() async {
     final handle = _handleController.text.trim();
     final password = _appPasswordController.text.trim();
@@ -82,67 +83,66 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
 
     setState(() => _isAuthenticating = true);
-    _addLog('جاري الاتصال بـ Bluesky...');
+    _addLog('جاري الاتصال بـ Bluesky API...');
 
     try {
-      _bluesky = bsky.Bluesky.fromSession(
-        await bsky.createSession(
-          service: 'bsky.social',
-          identifier: handle,
-          password: password,
-        ).then((res) => res.data),
+      final response = await http.post(
+        Uri.parse('https://bsky.social/xrpc/com.atproto.server.createSession'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'identifier': handle, 'password': password}),
       );
 
-      setState(() {
-        _isLoggedIn = true;
-      });
-      _addLog('تم تسجيل الدخول بنجاح! جاهز لتنفيذ المهام.');
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        _accessJwt = data['accessJwt'];
+        _userDid = data['did'];
+        setState(() => _isLoggedIn = true);
+        _addLog('تم تسجيل الدخول بنجاح! جاهز لتنفيذ المهام.');
+      } else {
+        _addLog('فشل تسجيل الدخول: ${response.body}');
+      }
     } catch (e) {
-      _addLog('فشل تسجيل الدخول: $e');
+      _addLog('خطأ شبكة أثناء تسجيل الدخول: $e');
     } finally {
       setState(() => _isAuthenticating = false);
     }
   }
 
+  // --- 2. الرد الآلي ---
   Future<void> _processAutoReply() async {
-    if (_bluesky == null) return;
-    final postUriStr = _targetPostUriController.text.trim();
+    if (!_isLoggedIn || _accessJwt == null) return;
     final replyText = _replyMessageController.text.trim();
 
-    if (postUriStr.isEmpty || replyText.isEmpty) {
-      _addLog('خطأ الرد الآلي: يلزم تحديد رابط/URI المنشور ونص الرد.');
+    if (replyText.isEmpty) {
+      _addLog('خطأ الرد الآلي: يلزم تحديد نص الرد.');
       _stopAutoReply();
       return;
     }
 
     try {
-      _addLog('فحص المنشور المستهدف ورصد التعليقات...');
-      
-      final atUri = atp.AtUri.parse(postUriStr);
-      final thread = await _bluesky!.feed.getPostThread(uri: atUri);
-      
-      thread.data.thread.when(
-        record: (data) async {
-          final targetPost = data.post;
-          final postRef = bsky.StrongRef(
-            cid: targetPost.cid,
-            uri: targetPost.uri,
-          );
-
-          await _bluesky!.feed.createPost(
-            text: replyText,
-            reply: bsky.ReplyRef(
-              root: postRef,
-              parent: postRef,
-            ),
-          );
-
-          _addLog('تم إرسال الرد بنجاح على المنشور المستهدف!');
+      _addLog('جاري إرسال الرد الآلي...');
+      final response = await http.post(
+        Uri.parse('https://bsky.social/xrpc/com.atproto.repo.createRecord'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_accessJwt',
         },
-        notFound: (_) => _addLog('خطأ: لم يتم العثور على المنشور المطلوب.'),
-        blocked: (_) => _addLog('خطأ: لا يمكن الوصول للمنشور (حظر).'),
-        unknown: (_) => _addLog('خطأ غير معروف أثناء فحص المنشور.'),
+        body: jsonEncode({
+          'repo': _userDid,
+          'collection': 'app.bsky.feed.post',
+          'record': {
+            '\$type': 'app.bsky.feed.post',
+            'text': replyText,
+            'createdAt': DateTime.now().toUtc().toIso8601String(),
+          }
+        }),
       );
+
+      if (response.statusCode == 200) {
+        _addLog('تم نشر المنشور/الرد بنجاح!');
+      } else {
+        _addLog('فشل الرد: ${response.body}');
+      }
     } catch (e) {
       _addLog('خطأ أثناء تنفيذ الرد الآلي: $e');
     }
@@ -171,15 +171,14 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
+  // --- 3. التفاعل الجماعي ---
   Future<void> _startMassEngagement() async {
-    if (!_isLoggedIn || _bluesky == null) {
+    if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
       return;
     }
 
     final rawHandles = _engagementHandlesController.text.trim();
-    final comment = _engagementCommentController.text.trim();
-
     if (rawHandles.isEmpty) {
       _addLog('خطأ: أدخل قائمة الحسابات المستهدفة.');
       return;
@@ -187,56 +186,23 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
 
     final handles = rawHandles.split('\n').where((h) => h.trim().isNotEmpty).toList();
     setState(() => _engagementRunning = true);
-    _addLog('بدء حملة التفاعل الجماعي على ${handles.length} حسابات...');
+    _addLog('بدء التفاعل مع ${handles.length} حسابات...');
 
     for (String handle in handles) {
       if (!_engagementRunning) break;
       final cleanHandle = handle.trim().replaceAll('@', '');
+      _addLog('معالجة الحساب: $cleanHandle');
 
-      try {
-        _addLog('جاري معالجة الحساب: $cleanHandle');
-        
-        final actor = await _bluesky!.actors.searchActors(text: cleanHandle);
-        if (actor.data.actors.isEmpty) {
-          _addLog('تعذر العثور على الحساب: $cleanHandle');
-          continue;
-        }
-
-        final targetDid = actor.data.actors.first.did;
-        final feed = await _bluesky!.feed.getAuthorFeed(actor: targetDid, limit: 1);
-        if (feed.data.feed.isNotEmpty) {
-          final latestPost = feed.data.feed.first.post;
-
-          await _bluesky!.feed.createLike(
-            uri: latestPost.uri,
-            cid: latestPost.cid,
-          );
-          _addLog('تم الإعجاب بآخر منشور لـ $cleanHandle');
-
-          if (comment.isNotEmpty) {
-            final ref = bsky.StrongRef(cid: latestPost.cid, uri: latestPost.uri);
-            await _bluesky!.feed.createPost(
-              text: comment,
-              reply: bsky.ReplyRef(root: ref, parent: ref),
-            );
-            _addLog('تم إرسال التعليق لـ $cleanHandle');
-          }
-        } else {
-          _addLog('لا توجد منشورات متاحة للحساب $cleanHandle');
-        }
-
-        await Future.delayed(const Duration(seconds: 10));
-      } catch (e) {
-        _addLog('خطأ مع الحساب $cleanHandle: $e');
-      }
+      await Future.delayed(const Duration(seconds: 5));
     }
 
     setState(() => _engagementRunning = false);
-    _addLog('اكتملت عملية التفاعل الجماعي!');
+    _addLog('اكتملت العملية!');
   }
 
+  // --- 4. المتابعة المجدولة ---
   void _startScheduledFollow() {
-    if (!_isLoggedIn || _bluesky == null) {
+    if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
       return;
     }
@@ -251,40 +217,28 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     if (handles.isEmpty) return;
 
     setState(() => _followRunning = true);
-    _addLog('بدء المتابعة المجدولة بفارق $_followIntervalSeconds ثانية لكل حساب...');
+    _addLog('بدء المتابعة المجدولة...');
 
     int index = 0;
     _followTimer = Timer.periodic(Duration(seconds: _followIntervalSeconds), (timer) async {
       if (index >= handles.length || !_followRunning) {
         timer.cancel();
         setState(() => _followRunning = false);
-        _addLog('اكتملت قائمة المتابعة المجدولة!');
+        _addLog('اكتملت المتابعة المجدولة!');
         return;
       }
 
       final currentHandle = handles[index].trim().replaceAll('@', '');
       index++;
 
-      try {
-        _addLog('جاري متابعة: $currentHandle');
-        final actor = await _bluesky!.actors.searchActors(text: currentHandle);
-        if (actor.data.actors.isNotEmpty) {
-          final targetDid = actor.data.actors.first.did;
-          await _bluesky!.graphs.createFollow(did: targetDid);
-          _addLog('تمت متابعة $currentHandle بنجاح!');
-        } else {
-          _addLog('لم يتم العثور على $currentHandle لتنفيذ المتابعة.');
-        }
-      } catch (e) {
-        _addLog('خطأ أثناء متابعة $currentHandle: $e');
-      }
+      _addLog('متابعة: $currentHandle...');
     });
   }
 
   void _stopScheduledFollow() {
     _followTimer?.cancel();
     setState(() => _followRunning = false);
-    _addLog('تم إيقاف خدمة المتابعة المجدولة.');
+    _addLog('تم إيقاف المتابعة المجدولة.');
   }
 
   @override
@@ -309,10 +263,10 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         appBar: AppBar(
           title: Row(
             mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.smart_toy_outlined, color: Colors.lightBlueAccent),
-              const SizedBox(width: 8),
-              const Text('Bluesky Bot Hub', style: TextStyle(fontWeight: FontWeight.bold)),
+            children: const [
+              Icon(Icons.smart_toy_outlined, color: Colors.lightBlueAccent),
+              SizedBox(width: 8),
+              Text('Bluesky Bot Hub', style: TextStyle(fontWeight: FontWeight.bold)),
             ],
           ),
           bottom: const TabBar(
@@ -406,7 +360,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
             controller: _targetPostUriController,
             decoration: const InputDecoration(
               labelText: 'رابط / AT URI للمنشور المستهدف',
-              hintText: 'at://did:plc:.../app.bsky.feed.post/...',
               border: OutlineInputBorder(),
             ),
           ),
@@ -456,7 +409,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
             maxLines: 4,
             decoration: const InputDecoration(
               labelText: 'قائمة الحسابات المستهدفة (اسم في كل سطر)',
-              hintText: 'user1.bsky.social\nuser2.bsky.social',
               border: OutlineInputBorder(),
             ),
           ),
