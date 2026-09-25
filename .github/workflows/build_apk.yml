@@ -24,8 +24,11 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Project Files
+      - name: Generate Android Skeleton
         run: flutter create . --platforms=android --org=com.bluesky.bot
+
+      - name: Add Required Dependencies
+        run: flutter pub add bluesky atproto_core
 
       - name: Get Dependencies
         run: flutter pub get
