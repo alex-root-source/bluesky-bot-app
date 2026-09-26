@@ -19,26 +19,18 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="سجّل الدخول للمتابعة"
+        android:text="أدخل حساب واحد أو أكثر"
         android:textColor="#94A3B8"
         android:textSize="14sp"
-        android:layout_marginBottom="32dp" />
+        android:layout_marginBottom="20dp" />
 
     <EditText
-        android:id="@+id/handleInput"
+        android:id="@+id/accountsInput"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="اسم المستخدم (user.bsky.social)"
-        android:textColor="#FFFFFF"
-        android:textColorHint="#94A3B8"
-        android:layout_marginBottom="12dp" />
-
-    <EditText
-        android:id="@+id/passwordInput"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="كلمة مرور التطبيق"
-        android:inputType="textPassword"
+        android:layout_height="150dp"
+        android:hint="handle:app_password (حساب واحد في كل سطر)"
+        android:gravity="top"
+        android:inputType="textMultiLine"
         android:textColor="#FFFFFF"
         android:textColorHint="#94A3B8"
         android:layout_marginBottom="20dp" />
