@@ -60,6 +60,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   final _engagementCommentController = TextEditingController();
   bool _isScraping = false;
   bool _engagementRunning = false;
+  int _engagementIntervalSeconds = 10; // الحد الزمني للتفاعل
 
   final _followHandlesController = TextEditingController();
   int _followIntervalSeconds = 30;
@@ -108,6 +109,80 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       _addLog('خطأ شبكة أثناء تسجيل الدخول: $e');
     } finally {
       setState(() => _isAuthenticating = false);
+    }
+  }
+
+  Future<void> _fetchUsersFromPost() async {
+    final rawUrl = _postUrlForScrapeController.text.trim();
+    if (rawUrl.isEmpty) {
+      _addLog('خطأ: أدخل رابط المنشور أولاً.');
+      return;
+    }
+
+    setState(() => _isScraping = true);
+    _addLog('جاري استخراج وتصفية الحسابات الفريدة...');
+
+    try {
+      String atUri = rawUrl;
+      if (rawUrl.contains('bsky.app/profile/')) {
+        final parts = rawUrl.split('/post/');
+        if (parts.length == 2) {
+          final handleOrDid = parts[0].split('/').last;
+          final postId = parts[1].split('?').first;
+
+          final resolveRes = await http.get(
+            Uri.parse('https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$handleOrDid'),
+          );
+          if (resolveRes.statusCode == 200) {
+            final did = jsonDecode(resolveRes.body)['did'];
+            atUri = 'at://$did/app.bsky.feed.post/$postId';
+          }
+        }
+      }
+
+      final Set<String> uniqueHandles = {};
+      final authHeader = _accessJwt != null ? {'Authorization': 'Bearer $_accessJwt'} : <String, String>{};
+
+      final repostRes = await http.get(
+        Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getRepostedBy?uri=${Uri.encodeComponent(atUri)}&limit=100'),
+        headers: authHeader,
+      );
+
+      if (repostRes.statusCode == 200) {
+        final data = jsonDecode(repostRes.body);
+        final List reprs = data['repostedBy'] ?? [];
+        for (var u in reprs) {
+          if (u['handle'] != null) uniqueHandles.add(u['handle'].toString());
+        }
+      }
+
+      final likeRes = await http.get(
+        Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getLikes?uri=${Uri.encodeComponent(atUri)}&limit=100'),
+        headers: authHeader,
+      );
+
+      if (likeRes.statusCode == 200) {
+        final data = jsonDecode(likeRes.body);
+        final List likes = data['likes'] ?? [];
+        for (var l in likes) {
+          if (l['actor'] != null && l['actor']['handle'] != null) {
+            uniqueHandles.add(l['actor']['handle'].toString());
+          }
+        }
+      }
+
+      if (uniqueHandles.isNotEmpty) {
+        setState(() {
+          _engagementHandlesController.text = uniqueHandles.toList().join('\n');
+        });
+        _addLog('تم سحب ${uniqueHandles.length} حساباً فريداً بدون تكرار!');
+      } else {
+        _addLog('لم يتم العثور على أي تفاعلات لهذا المنشور.');
+      }
+    } catch (e) {
+      _addLog('خطأ أثناء سحب الحسابات: $e');
+    } finally {
+      setState(() => _isScraping = false);
     }
   }
 
@@ -175,6 +250,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
+  // التفاعل الجماعي الحقيقي مع إمكانية الإيقاف والحد الزمني
   Future<void> _startMassEngagement() async {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -193,23 +269,93 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     final commentsList = rawComments.split('\n').where((c) => c.trim().isNotEmpty).toList();
 
     setState(() => _engagementRunning = true);
-    _addLog('بدء التفاعل مع ${handles.length} حسابات...');
+    _addLog('بدء التفاعل الحقيقي مع ${handles.length} حسابات...');
 
     for (String handle in handles) {
-      if (!_engagementRunning) break;
-      final cleanHandle = handle.trim().replaceAll('@', '');
-
-      String? currentComment;
-      if (commentsList.isNotEmpty) {
-        currentComment = commentsList[_random.nextInt(commentsList.length)].trim();
+      if (!_engagementRunning) {
+        _addLog('تم إيقاف التفاعل الجماعي بواسطة المستخدم.');
+        break;
       }
 
-      _addLog('معالجة الحساب: $cleanHandle ${currentComment != null ? "بـ: \"$currentComment\"" : ""}');
-      await Future.delayed(const Duration(seconds: 5));
+      final cleanHandle = handle.trim().replaceAll('@', '');
+
+      try {
+        final resolveRes = await http.get(
+          Uri.parse('https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$cleanHandle'),
+        );
+
+        if (resolveRes.statusCode == 200) {
+          final targetDid = jsonDecode(resolveRes.body)['did'];
+
+          final feedRes = await http.get(
+            Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?actor=$targetDid&limit=1'),
+            headers: {'Authorization': 'Bearer $_accessJwt'},
+          );
+
+          if (feedRes.statusCode == 200) {
+            final feedData = jsonDecode(feedRes.body);
+            final feed = feedData['feed'] as List;
+
+            if (feed.isNotEmpty) {
+              final post = feed[0]['post'];
+              final postUri = post['uri'];
+              final postCid = post['cid'];
+
+              String commentText = "شكراً لك";
+              if (commentsList.isNotEmpty) {
+                commentText = commentsList[_random.nextInt(commentsList.length)].trim();
+              }
+
+              final replyRes = await http.post(
+                Uri.parse('https://bsky.social/xrpc/com.atproto.repo.createRecord'),
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': 'Bearer $_accessJwt',
+                },
+                body: jsonEncode({
+                  'repo': _userDid,
+                  'collection': 'app.bsky.feed.post',
+                  'record': {
+                    'text': commentText,
+                    'createdAt': DateTime.now().toUtc().toIso8601String(),
+                    'reply': {
+                      'root': {'uri': postUri, 'cid': postCid},
+                      'parent': {'uri': postUri, 'cid': postCid},
+                    }
+                  }
+                }),
+              );
+
+              if (replyRes.statusCode == 200) {
+                _addLog('تم التعليق بنجاح على $cleanHandle بـ: "$commentText"');
+              } else {
+                _addLog('فشل التعليق على $cleanHandle: ${replyRes.body}');
+              }
+            } else {
+              _addLog('لا توجد منشورات للحساب $cleanHandle');
+            }
+          }
+        } else {
+          _addLog('لم يتم العثور على الحساب: $cleanHandle');
+        }
+      } catch (e) {
+        _addLog('خطأ مع $cleanHandle: $e');
+      }
+
+      // تطبيق الفارق الزمني المحدد من الواجهة
+      for (int i = 0; i < _engagementIntervalSeconds; i++) {
+        if (!_engagementRunning) break;
+        await Future.delayed(const Duration(seconds: 1));
+      }
     }
 
     setState(() => _engagementRunning = false);
-    _addLog('اكتملت العملية بنجاح!');
+    _addLog('اكتملت عملية التفاعل الفعلي!');
+  }
+
+  void _stopMassEngagement() {
+    setState(() => _engagementRunning = false);
+    _addLog('جاري إيقاف العملية...');
   }
 
   void _startScheduledFollow() {
@@ -416,11 +562,33 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _postUrlForScrapeController,
+                  decoration: const InputDecoration(
+                    labelText: 'رابط المنشور لسحب الحسابات',
+                    hintText: 'https://bsky.app/profile/.../post/...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _isScraping ? null : _fetchUsersFromPost,
+                icon: const Icon(Icons.download),
+                label: Text(_isScraping ? 'سحب...' : 'سحب'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           TextField(
             controller: _engagementHandlesController,
-            maxLines: 5,
+            maxLines: 4,
             decoration: const InputDecoration(
-              labelText: 'الحسابات المستهدفة (ضع كل اسم في سطر)',
+              labelText: 'الحسابات المستهدفة (تُمنع المكررة أوتوماتيكياً)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -433,104 +601,13 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
               border: OutlineInputBorder(),
             ),
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: ElevatedButton.icon(
-              onPressed: _engagementRunning ? null : _startMassEngagement,
-              icon: const Icon(Icons.flash_on),
-              label: Text(_engagementRunning ? 'جاري التنفيذ...' : 'بدء التفاعل الجماعي'),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFollowTab() {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: ListView(
-        children: [
-          TextField(
-            controller: _followHandlesController,
-            maxLines: 4,
-            decoration: const InputDecoration(
-              labelText: 'قائمة الحسابات للمتابعة (اسم في كل سطر)',
-              border: OutlineInputBorder(),
-            ),
-          ),
           const SizedBox(height: 12),
           Row(
             children: [
-              const Text('الفارق الزمني بين كل متابعة:'),
+              const Text('الفارق الزمني بين كل تعليق:'),
               const Spacer(),
               DropdownButton<int>(
-                value: _followIntervalSeconds,
+                value: _engagementIntervalSeconds,
                 items: const [
-                  DropdownMenuItem(value: 15, child: Text('15 ثانية')),
-                  DropdownMenuItem(value: 30, child: Text('30 ثانية')),
-                  DropdownMenuItem(value: 60, child: Text('دقيقة واحدة')),
-                ],
-                onChanged: (val) {
-                  if (val != null) setState(() => _followIntervalSeconds = val);
-                },
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _followRunning ? null : _startScheduledFollow,
-                  icon: const Icon(Icons.person_add),
-                  label: const Text('بدء المتابعة المجدولة'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: !_followRunning ? null : _stopScheduledFollow,
-                  icon: const Icon(Icons.pause),
-                  label: const Text('إيقاف'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogViewer() {
-    return Container(
-      height: 180,
-      width: double.infinity,
-      color: Colors.black45,
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('سجل السجلات والعمليات الحية:', style: TextStyle(color: Colors.grey, fontSize: 12)),
-          const Divider(color: Colors.white24),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                return Text(
-                  _logs[index],
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.greenAccent),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+                  DropdownMenuItem(value: 5, child: Text('5 ثوانٍ')),
+                  DropdownMenu
