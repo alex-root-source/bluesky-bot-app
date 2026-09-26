@@ -24,6 +24,20 @@ jobs:
         with:
           channel: 'stable'
 
+      - name: Generate Android Platform Structure
+        run: flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
+
+      - name: Add HTTP Dependency
+        run: flutter pub add http
+
+      - name: Inject Custom Logo to Android Launcher Icons
+        run: |
+          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png || true
+          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+
       - name: Get Dependencies
         run: flutter pub get
 
