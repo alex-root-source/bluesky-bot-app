@@ -27,7 +27,7 @@ jobs:
       - name: Initialize Clean Flutter App
         run: |
           rm -rf android ios lib test pubspec.yaml
-          flutter create . --platforms=android --org=com.bluesky.bot
+          flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
 
       - name: Restore Custom main.dart
         run: git checkout HEAD -- lib/main.dart
