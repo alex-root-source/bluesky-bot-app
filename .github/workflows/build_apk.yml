@@ -30,8 +30,25 @@ jobs:
       - name: Add HTTP Package
         run: flutter pub add http
 
+      - name: Add Launcher Icons Package
+        run: flutter pub add --dev flutter_launcher_icons
+
+      - name: Configure Launcher Icons
+        run: |
+          cat <<EOF >> pubspec.yaml
+
+          flutter_launcher_icons:
+            android: "launcher_icon"
+            ios: true
+            image_path: "assets/logo.png"
+            min_sdk_android: 21
+          EOF
+
       - name: Get Dependencies
         run: flutter pub get
+
+      - name: Generate Launcher Icons
+        run: flutter pub run flutter_launcher_icons
 
       - name: Build APK
         run: flutter build apk --release --no-tree-shake-icons
