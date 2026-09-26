@@ -21,16 +21,20 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URLEncoder
 
 class EngagementService : Service() {
+
+    private data class AccountSession(val handle: String, val did: String, val jwt: String)
 
     companion object {
         const val ACTION_START = "com.bluesky.bot.action.START"
         const val ACTION_STOP = "com.bluesky.bot.action.STOP"
 
-        const val EXTRA_ACCESS_JWT = "extra_access_jwt"
-        const val EXTRA_USER_DID = "extra_user_did"
-        const val EXTRA_HANDLES = "extra_handles"
+        const val EXTRA_ACCOUNT_HANDLES = "extra_account_handles"
+        const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
+        const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
+        const val EXTRA_TARGET_HANDLES = "extra_target_handles"
         const val EXTRA_COMMENTS = "extra_comments"
         const val EXTRA_DELAY_SECONDS = "extra_delay_seconds"
 
@@ -40,11 +44,15 @@ class EngagementService : Service() {
 
         private const val CHANNEL_ID = "engagement_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val VISIBILITY_HIDDEN_STREAK_ALERT = 3
     }
 
     private val client = OkHttpClient()
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var engagementJob: Job? = null
+
+    // عدّاد "تعليق غير ظاهر" متتالي لكل حساب على حدة
+    private val hiddenStreakByAccount = mutableMapOf<String, Int>()
 
     @Volatile
     private var isRunning = false
@@ -65,54 +73,72 @@ class EngagementService : Service() {
             }
 
             ACTION_START -> {
-                val accessJwt = intent.getStringExtra(EXTRA_ACCESS_JWT)
-                val userDid = intent.getStringExtra(EXTRA_USER_DID)
-                val handles = intent.getStringArrayListExtra(EXTRA_HANDLES) ?: arrayListOf()
+                val accountHandles = intent.getStringArrayListExtra(EXTRA_ACCOUNT_HANDLES) ?: arrayListOf()
+                val accountDids = intent.getStringArrayListExtra(EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
+                val accountJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
+                val targetHandles = intent.getStringArrayListExtra(EXTRA_TARGET_HANDLES) ?: arrayListOf()
                 val comments = intent.getStringArrayListExtra(EXTRA_COMMENTS) ?: arrayListOf()
                 val delaySeconds = intent.getIntExtra(EXTRA_DELAY_SECONDS, 10)
 
-                if (accessJwt == null || userDid == null || handles.isEmpty() || comments.isEmpty()) {
+                if (accountHandles.isEmpty() ||
+                    accountHandles.size != accountDids.size ||
+                    accountHandles.size != accountJwts.size ||
+                    targetHandles.isEmpty() || comments.isEmpty()
+                ) {
                     broadcastLog("خطأ: بيانات ناقصة لبدء الخدمة.")
                     stopSelfSafely()
                     return START_NOT_STICKY
                 }
 
-                startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, handles.size))
-                startEngagement(accessJwt, userDid, handles, comments, delaySeconds)
+                val accounts = accountHandles.indices.map {
+                    AccountSession(accountHandles[it], accountDids[it], accountJwts[it])
+                }
+
+                startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, targetHandles.size))
+                startEngagement(accounts, targetHandles, comments, delaySeconds)
             }
         }
         return START_NOT_STICKY
     }
 
     private fun startEngagement(
-        accessJwt: String,
-        userDid: String,
-        handles: List<String>,
+        accounts: List<AccountSession>,
+        targetHandles: List<String>,
         comments: List<String>,
         delaySeconds: Int
     ) {
         isRunning = true
+        hiddenStreakByAccount.clear()
         engagementJob?.cancel()
         engagementJob = serviceScope.launch {
+            // توزيع متوازن وعشوائي: كل حساب ياخذ نفس الحصة تقريباً، لكن الترتيب يكون عشوائي
+            val accountAssignment = MutableList(targetHandles.size) { it % accounts.size }.shuffled()
+
             broadcastLog(
-                "بدء التفاعل مع ${handles.size} حساب فريد، باستخدام ${comments.size} " +
+                "بدء التفاعل مع ${targetHandles.size} حساب فريد عبر ${accounts.size} حساب بوت " +
+                    "(${accounts.joinToString(", ") { it.handle }})، باستخدام ${comments.size} " +
                     "نص تعليق مختلف... (التأخير: $delaySeconds ثانية)"
             )
 
-            for ((index, handle) in handles.withIndex()) {
+            for ((index, targetHandle) in targetHandles.withIndex()) {
                 if (!isRunning) {
                     broadcastLog("تم إيقاف التفاعل بواسطة المستخدم.")
                     break
                 }
 
+                val account = accounts[accountAssignment[index]]
                 val comment = comments[index % comments.size]
-                val cleanHandle = handle.replace("@", "")
+                val cleanTarget = targetHandle.replace("@", "")
 
-                updateNotification("جاري التفاعل مع $cleanHandle (${index + 1}/${handles.size})", index, handles.size)
+                updateNotification(
+                    "${account.handle} → $cleanTarget (${index + 1}/${targetHandles.size})",
+                    index,
+                    targetHandles.size
+                )
 
                 try {
                     val resolveReq = Request.Builder()
-                        .url("https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$cleanHandle")
+                        .url("https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$cleanTarget")
                         .build()
                     val resolveRes = client.newCall(resolveReq).execute()
 
@@ -121,7 +147,7 @@ class EngagementService : Service() {
 
                         val feedReq = Request.Builder()
                             .url("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?actor=$targetDid&limit=1")
-                            .addHeader("Authorization", "Bearer $accessJwt")
+                            .addHeader("Authorization", "Bearer ${account.jwt}")
                             .build()
                         val feedRes = client.newCall(feedReq).execute()
 
@@ -148,7 +174,7 @@ class EngagementService : Service() {
                                 }
 
                                 val createRecordJson = JSONObject().apply {
-                                    put("repo", userDid)
+                                    put("repo", account.did)
                                     put("collection", "app.bsky.feed.post")
                                     put("record", replyRecord)
                                 }
@@ -157,25 +183,33 @@ class EngagementService : Service() {
                                     .toRequestBody("application/json".toMediaType())
                                 val commentReq = Request.Builder()
                                     .url("https://bsky.social/xrpc/com.atproto.repo.createRecord")
-                                    .addHeader("Authorization", "Bearer $accessJwt")
+                                    .addHeader("Authorization", "Bearer ${account.jwt}")
                                     .post(postBody)
                                     .build()
 
                                 val commentRes = client.newCall(commentReq).execute()
+                                val commentBodyStr = commentRes.body?.string() ?: ""
+
                                 if (commentRes.isSuccessful) {
-                                    broadcastLog("تم التعليق بنجاح على $cleanHandle: \"$comment\"")
+                                    broadcastLog(
+                                        "تم التعليق من ${account.handle} بنجاح على $cleanTarget: \"$comment\""
+                                    )
+                                    val newPostUri = JSONObject(commentBodyStr).optString("uri")
+                                    if (newPostUri.isNotEmpty()) {
+                                        verifyVisibilityAndWarn(account.handle, newPostUri, cleanTarget)
+                                    }
                                 } else {
-                                    broadcastLog("فشل التعليق على $cleanHandle")
+                                    broadcastLog("فشل التعليق من ${account.handle} على $cleanTarget")
                                 }
                             } else {
-                                broadcastLog("لا توجد منشورات للحساب $cleanHandle")
+                                broadcastLog("لا توجد منشورات للحساب $cleanTarget")
                             }
                         }
                     } else {
-                        broadcastLog("تعذر العثور على $cleanHandle")
+                        broadcastLog("تعذر العثور على $cleanTarget")
                     }
                 } catch (e: Exception) {
-                    broadcastLog("خطأ مع $cleanHandle: ${e.message}")
+                    broadcastLog("خطأ مع $cleanTarget: ${e.message}")
                 }
 
                 for (i in 0 until delaySeconds) {
@@ -188,6 +222,49 @@ class EngagementService : Service() {
             broadcastLog("اكتملت العملية بالكامل!")
             broadcastFinished()
             stopSelfSafely()
+        }
+    }
+
+    /**
+     * يتحقق -عبر الـ API العام غير المصادق لبلوسكاي- إن التعليق الجديد ظاهر فعلاً
+     * لأي زائر غريب. لو تكرر عدم الظهور، يرسل تنبيهاً واضحاً باللوج.
+     */
+    private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String) {
+        delay(4000) // إعطاء وقت لفهرسة المنشور قبل التحقق
+        val visible = isPostPubliclyVisible(postUri)
+
+        if (visible) {
+            hiddenStreakByAccount[accountHandle] = 0
+            return
+        }
+
+        val streak = (hiddenStreakByAccount[accountHandle] ?: 0) + 1
+        hiddenStreakByAccount[accountHandle] = streak
+
+        broadcastLog("⚠️ تنبيه: تعليق $accountHandle على $targetHandle قد لا يكون ظاهراً للعامة.")
+
+        if (streak >= VISIBILITY_HIDDEN_STREAK_ALERT) {
+            broadcastLog(
+                "🚨🚨 تنبيه هام: آخر $streak تعليقات من حساب $accountHandle لم تظهر للعامة. " +
+                    "يُحتمل أن الحساب أصبح مقيّداً (Shadow-limited) من بلوسكاي. يُنصح بإيقاف استخدامه مؤقتاً."
+            )
+        }
+    }
+
+    private fun isPostPubliclyVisible(postUri: String): Boolean {
+        return try {
+            val encodedUri = URLEncoder.encode(postUri, "UTF-8")
+            val req = Request.Builder()
+                .url("https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=$encodedUri&depth=0")
+                .build()
+            val res = client.newCall(req).execute()
+            if (!res.isSuccessful) return false
+
+            val bodyStr = res.body?.string() ?: return false
+            val thread = JSONObject(bodyStr).optJSONObject("thread") ?: return false
+            thread.optString("\$type") == "app.bsky.feed.defs#threadViewPost"
+        } catch (e: Exception) {
+            false
         }
     }
 
