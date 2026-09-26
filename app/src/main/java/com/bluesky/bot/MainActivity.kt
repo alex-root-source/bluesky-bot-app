@@ -44,7 +44,7 @@ class MainActivity : AppCompatActivity() {
             val handle = handleInput.text.toString().trim()
             val pass = passwordInput.text.toString().trim()
             if (handle.isEmpty() || pass.isEmpty()) {
-                addLog("خطأ: يرجى إدخال اسم المستخدم وكلمة المرور.")
+                addLog("خطأ: يرجى إدخل اسم المستخدم وكلمة المرور.")
                 return@setOnClickListener
             }
 
