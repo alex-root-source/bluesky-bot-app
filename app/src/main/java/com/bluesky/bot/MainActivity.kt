@@ -28,7 +28,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var handlesInput: EditText
     private lateinit var excludeInput: EditText
     private lateinit var commentInput: EditText
-    private lateinit var delayInput: EditText
+    private lateinit var delayMinInput: EditText
+    private lateinit var delayMaxInput: EditText
     private lateinit var startBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var logText: TextView
@@ -58,6 +59,7 @@ class MainActivity : AppCompatActivity() {
         accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
 
         if (accountHandles.isEmpty()) {
+            // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -70,10 +72,18 @@ class MainActivity : AppCompatActivity() {
         handlesInput = findViewById(R.id.handlesInput)
         excludeInput = findViewById(R.id.excludeInput)
         commentInput = findViewById(R.id.commentInput)
-        delayInput = findViewById(R.id.delayInput)
+        delayMinInput = findViewById(R.id.delayMinInput)
+        delayMaxInput = findViewById(R.id.delayMaxInput)
         startBtn = findViewById(R.id.startBtn)
         stopBtn = findViewById(R.id.stopBtn)
         logText = findViewById(R.id.logText)
+
+        // استرجاع آخر بيانات محفوظة (إن وجدت) حتى ما تضيع بين مرات فتح التطبيق
+        BotPrefs.loadHandles(this)?.let { handlesInput.setText(it) }
+        BotPrefs.loadExclude(this)?.let { excludeInput.setText(it) }
+        BotPrefs.loadComment(this)?.let { commentInput.setText(it) }
+        BotPrefs.loadDelayMin(this)?.let { delayMinInput.setText(it) }
+        BotPrefs.loadDelayMax(this)?.let { delayMaxInput.setText(it) }
 
         loggedInAsText.text = "مسجل الدخول بـ ${accountHandles.size} حساب: ${accountHandles.joinToString(", ")}"
 
@@ -105,7 +115,14 @@ class MainActivity : AppCompatActivity() {
 
             val comments = commentInput.text.toString()
                 .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-            val delaySeconds = delayInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 10
+
+            var delayMin = delayMinInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 8
+            var delayMax = delayMaxInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 15
+            if (delayMin > delayMax) {
+                val tmp = delayMin
+                delayMin = delayMax
+                delayMax = tmp
+            }
 
             if (handles.isEmpty()) {
                 addLog("خطأ: أدخل قائمة الحسابات المستهدفة.")
@@ -116,6 +133,15 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            BotPrefs.saveForm(
+                this,
+                handlesInput.text.toString(),
+                excludeInput.text.toString(),
+                commentInput.text.toString(),
+                delayMin.toString(),
+                delayMax.toString()
+            )
+
             val serviceIntent = Intent(this, EngagementService::class.java).apply {
                 action = EngagementService.ACTION_START
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_HANDLES, accountHandles)
@@ -123,7 +149,8 @@ class MainActivity : AppCompatActivity() {
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, accountJwts)
                 putStringArrayListExtra(EngagementService.EXTRA_TARGET_HANDLES, ArrayList(handles))
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
-                putExtra(EngagementService.EXTRA_DELAY_SECONDS, delaySeconds)
+                putExtra(EngagementService.EXTRA_DELAY_MIN_SECONDS, delayMin)
+                putExtra(EngagementService.EXTRA_DELAY_MAX_SECONDS, delayMax)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
             startBtn.isEnabled = false
