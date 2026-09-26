@@ -60,7 +60,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   final _engagementCommentController = TextEditingController();
   bool _isScraping = false;
   bool _engagementRunning = false;
-  int _engagementIntervalSeconds = 10; // الحد الزمني للتفاعل
+  int _engagementIntervalSeconds = 10;
 
   final _followHandlesController = TextEditingController();
   int _followIntervalSeconds = 30;
@@ -250,7 +250,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
-  // التفاعل الجماعي الحقيقي مع إمكانية الإيقاف والحد الزمني
   Future<void> _startMassEngagement() async {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -342,7 +341,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         _addLog('خطأ مع $cleanHandle: $e');
       }
 
-      // تطبيق الفارق الزمني المحدد من الواجهة
       for (int i = 0; i < _engagementIntervalSeconds; i++) {
         if (!_engagementRunning) break;
         await Future.delayed(const Duration(seconds: 1));
@@ -610,4 +608,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
                 value: _engagementIntervalSeconds,
                 items: const [
                   DropdownMenuItem(value: 5, child: Text('5 ثوانٍ')),
-                  DropdownMenu
+                  DropdownMenuItem(value: 10, child: Text('10 ثوانٍ')),
+                  DropdownMenuItem(value: 20, child: Text('20 ثانية')),
+                 
