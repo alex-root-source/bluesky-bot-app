@@ -24,14 +24,6 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Rebuild Project Environment
-        run: |
-          rm -rf android ios pubspec.yaml
-          flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
-
-      - name: Install HTTP Dependency
-        run: flutter pub add http
-
       - name: Get Dependencies
         run: flutter pub get
 
