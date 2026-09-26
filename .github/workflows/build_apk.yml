@@ -41,3 +41,4 @@ jobs:
         with:
           name: bluesky-bot-app
           path: build/app/outputs/flutter-apk/app-debug.apk
+          
