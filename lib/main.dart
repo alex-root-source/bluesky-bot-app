@@ -15,7 +15,7 @@ class BlueskyAutomationApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Bluesky Automation Hub',
+      title: 'Bluesky Bot Hub',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
@@ -55,7 +55,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   bool _autoReplyRunning = false;
   Timer? _autoReplyTimer;
 
-  // التفاعل الجماعي وسحب الحسابات
   final _postUrlForScrapeController = TextEditingController();
   final _engagementHandlesController = TextEditingController();
   final _engagementCommentController = TextEditingController();
@@ -77,7 +76,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     });
   }
 
-  // --- 1. تسجيل الدخول ---
   Future<void> _login() async {
     final handle = _handleController.text.trim();
     final password = _appPasswordController.text.trim();
@@ -98,11 +96,11 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       );
 
       if (response.statusCode == 200) {
-        final data = jsonEncode(response.body);
+        final data = jsonDecode(response.body);
         _accessJwt = data['accessJwt'];
         _userDid = data['did'];
         setState(() => _isLoggedIn = true);
-        _addLog('تم تسجيل الدخول بنجاح! جاهز لتنفيذ المهام.');
+        _addLog('تم تسجيل الدخول بنجاح!');
       } else {
         _addLog('فشل تسجيل الدخول: ${response.body}');
       }
@@ -113,16 +111,15 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
   }
 
-  // --- ميزة سحب الحسابات المتقدمة (دمج الريبوست واللايكات مع تصفية المكرر) ---
-  Future<void> _fetchRepostedAndLikedUsers() async {
+  Future<void> _fetchUsersFromPost() async {
     final rawUrl = _postUrlForScrapeController.text.trim();
     if (rawUrl.isEmpty) {
-      _addLog('خطأ: أدخل رابط المنشور أولاً لسحب الحسابات.');
+      _addLog('خطأ: أدخل رابط المنشور أولاً.');
       return;
     }
 
     setState(() => _isScraping = true);
-    _addLog('جاري استخراج وتصفية الحسابات الفريدة من المنشور...');
+    _addLog('جاري استخراج وتصفية الحسابات الفريدة...');
 
     try {
       String atUri = rawUrl;
@@ -131,7 +128,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         if (parts.length == 2) {
           final handleOrDid = parts[0].split('/').last;
           final postId = parts[1].split('?').first;
-          
+
           final resolveRes = await http.get(
             Uri.parse('https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$handleOrDid'),
           );
@@ -142,12 +139,9 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         }
       }
 
-      // استخدمنا Set لمنع تكرار أي اسم إطلاقاً
       final Set<String> uniqueHandles = {};
-
       final authHeader = _accessJwt != null ? {'Authorization': 'Bearer $_accessJwt'} : <String, String>{};
 
-      // 1. جلب من قاموا بالـ Repost
       final repostRes = await http.get(
         Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getRepostedBy?uri=${Uri.encodeComponent(atUri)}&limit=100'),
         headers: authHeader,
@@ -161,7 +155,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         }
       }
 
-      // 2. جلب من قاموا بالـ Like
       final likeRes = await http.get(
         Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getLikes?uri=${Uri.encodeComponent(atUri)}&limit=100'),
         headers: authHeader,
@@ -181,9 +174,9 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         setState(() {
           _engagementHandlesController.text = uniqueHandles.toList().join('\n');
         });
-        _addLog('تم سحب وتصفية ${uniqueHandles.length} حساباً فريداً (بدون تكرار)!');
+        _addLog('تم سحب ${uniqueHandles.length} حساباً فريداً بدون تكرار!');
       } else {
-        _addLog('لم يتم العثور على أي تفاعلات فريدة لهذا المنشور.');
+        _addLog('لم يتم العثور على أي تفاعلات لهذا المنشور.');
       }
     } catch (e) {
       _addLog('خطأ أثناء سحب الحسابات: $e');
@@ -192,13 +185,12 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
   }
 
-  // --- 2. الرد الآلي ---
   Future<void> _processAutoReply() async {
     if (!_isLoggedIn || _accessJwt == null) return;
     final rawReplies = _replyMessageController.text.trim();
 
     if (rawReplies.isEmpty) {
-      _addLog('خطأ الرد الآلي: يلزم تحديد نص الرد.');
+      _addLog('خطأ: يلزم تحديد نص الرد.');
       _stopAutoReply();
       return;
     }
@@ -207,7 +199,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     final selectedReply = replyList[_random.nextInt(replyList.length)].trim();
 
     try {
-      _addLog('جاري إرسال الرد الآلي: "$selectedReply"');
+      _addLog('جاري إرسال الرد: "$selectedReply"');
       final response = await http.post(
         Uri.parse('https://bsky.social/xrpc/com.atproto.repo.createRecord'),
         headers: {
@@ -231,7 +223,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
         _addLog('فشل الرد: ${response.body}');
       }
     } catch (e) {
-      _addLog('خطأ أثناء تنفيذ الرد الآلي: $e');
+      _addLog('خطأ أثناء التنفيذ: $e');
     }
   }
 
@@ -258,7 +250,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
-  // --- 3. التفاعل الجماعي ---
   Future<void> _startMassEngagement() async {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -277,7 +268,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     final commentsList = rawComments.split('\n').where((c) => c.trim().isNotEmpty).toList();
 
     setState(() => _engagementRunning = true);
-    _addLog('بدء التفاعل مع ${handles.length} حسابات فريدة...');
+    _addLog('بدء التفاعل مع ${handles.length} حسابات...');
 
     for (String handle in handles) {
       if (!_engagementRunning) break;
@@ -289,7 +280,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       }
 
       _addLog('معالجة الحساب: $cleanHandle ${currentComment != null ? "بـ: \"$currentComment\"" : ""}');
-
       await Future.delayed(const Duration(seconds: 5));
     }
 
@@ -297,7 +287,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('اكتملت العملية بنجاح!');
   }
 
-  // --- 4. المتابعة المجدولة ---
   void _startScheduledFollow() {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -516,7 +505,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
               ),
               const SizedBox(width: 8),
               ElevatedButton.icon(
-                onPressed: _isScraping ? null : _fetchRepostedAndLikedUsers,
+                onPressed: _isScraping ? null : _fetchUsersFromPost,
                 icon: const Icon(Icons.download),
                 label: Text(_isScraping ? 'سحب...' : 'سحب'),
                 style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
@@ -605,4 +594,23 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
                   onPressed: !_followRunning ? null : _stopScheduledFollow,
                   icon: const Icon(Icons.pause),
                   label: const Text('إيقاف'),
-                  style: ElevatedButt
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLogViewer() {
+    return Container(
+      height: 180,
+      width: double.infinity,
+      color: Colors.black45,
+      padding: const EdgeInsets.all(8.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('سجل السجلات والعمليات الحية:', style: TextStyle(colo
