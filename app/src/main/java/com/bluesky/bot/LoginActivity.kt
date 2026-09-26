@@ -21,16 +21,15 @@ import org.json.JSONObject
 class LoginActivity : AppCompatActivity() {
 
     companion object {
-        const val EXTRA_ACCESS_JWT = "extra_access_jwt"
-        const val EXTRA_USER_DID = "extra_user_did"
-        const val EXTRA_HANDLE = "extra_handle"
+        const val EXTRA_ACCOUNT_HANDLES = "extra_account_handles"
+        const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
+        const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
     }
 
     private val client = OkHttpClient()
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
-    private lateinit var handleInput: EditText
-    private lateinit var passwordInput: EditText
+    private lateinit var accountsInput: EditText
     private lateinit var loginBtn: Button
     private lateinit var statusText: TextView
 
@@ -38,64 +37,85 @@ class LoginActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_login)
 
-        handleInput = findViewById(R.id.handleInput)
-        passwordInput = findViewById(R.id.passwordInput)
+        accountsInput = findViewById(R.id.accountsInput)
         loginBtn = findViewById(R.id.loginBtn)
         statusText = findViewById(R.id.statusText)
 
         loginBtn.setOnClickListener {
-            val handle = handleInput.text.toString().trim()
-            val pass = passwordInput.text.toString().trim()
+            val lines = accountsInput.text.toString()
+                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
 
-            if (handle.isEmpty() || pass.isEmpty()) {
-                statusText.text = "خطأ: يرجى إدخال اسم المستخدم وكلمة المرور."
+            if (lines.isEmpty()) {
+                statusText.text = "خطأ: أدخل حساب واحد على الأقل بصيغة handle:password"
                 return@setOnClickListener
             }
 
             loginBtn.isEnabled = false
-            statusText.text = "جاري تسجيل الدخول..."
+
+            val successHandles = ArrayList<String>()
+            val successDids = ArrayList<String>()
+            val successJwts = ArrayList<String>()
+            val failedHandles = ArrayList<String>()
 
             scope.launch(Dispatchers.IO) {
-                try {
-                    val json = JSONObject().apply {
-                        put("identifier", handle)
-                        put("password", pass)
+                for ((i, line) in lines.withIndex()) {
+                    val parts = line.split(":", limit = 2)
+                    if (parts.size != 2) {
+                        failedHandles.add(line)
+                        continue
                     }
-                    val body = json.toString().toRequestBody("application/json".toMediaType())
-                    val request = Request.Builder()
-                        .url("https://bsky.social/xrpc/com.atproto.server.createSession")
-                        .post(body)
-                        .build()
+                    val handle = parts[0].trim()
+                    val pass = parts[1].trim()
 
-                    val response = client.newCall(request).execute()
-                    val resStr = response.body?.string() ?: ""
-
-                    if (response.isSuccessful) {
-                        val resJson = JSONObject(resStr)
-                        val accessJwt = resJson.getString("accessJwt")
-                        val did = resJson.getString("did")
-
-                        withContext(Dispatchers.Main) {
-                            statusText.text = "تم تسجيل الدخول بنجاح!"
-                            val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
-                                putExtra(EXTRA_ACCESS_JWT, accessJwt)
-                                putExtra(EXTRA_USER_DID, did)
-                                putExtra(EXTRA_HANDLE, handle)
-                            }
-                            startActivity(intent)
-                            finish()
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            loginBtn.isEnabled = true
-                            statusText.text = "فشل تسجيل الدخول: تحقق من اسم المستخدم وكلمة المرور."
-                        }
-                    }
-                } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        loginBtn.isEnabled = true
-                        statusText.text = "خطأ شبكة: ${e.message}"
+                        statusText.text = "تسجيل الدخول (${i + 1}/${lines.size}): $handle..."
                     }
+
+                    try {
+                        val json = JSONObject().apply {
+                            put("identifier", handle)
+                            put("password", pass)
+                        }
+                        val body = json.toString().toRequestBody("application/json".toMediaType())
+                        val request = Request.Builder()
+                            .url("https://bsky.social/xrpc/com.atproto.server.createSession")
+                            .post(body)
+                            .build()
+
+                        val response = client.newCall(request).execute()
+                        val resStr = response.body?.string() ?: ""
+
+                        if (response.isSuccessful) {
+                            val resJson = JSONObject(resStr)
+                            successHandles.add(handle)
+                            successDids.add(resJson.getString("did"))
+                            successJwts.add(resJson.getString("accessJwt"))
+                        } else {
+                            failedHandles.add(handle)
+                        }
+                    } catch (e: Exception) {
+                        failedHandles.add(handle)
+                    }
+                }
+
+                withContext(Dispatchers.Main) {
+                    if (successHandles.isEmpty()) {
+                        loginBtn.isEnabled = true
+                        statusText.text = "فشل تسجيل الدخول لجميع الحسابات. تحقق من البيانات (الصيغة: handle:password)."
+                        return@withContext
+                    }
+
+                    if (failedHandles.isNotEmpty()) {
+                        statusText.text = "تم الدخول بـ ${successHandles.size} حساب. فشل: ${failedHandles.joinToString(", ")}"
+                    }
+
+                    val intent = Intent(this@LoginActivity, MainActivity::class.java).apply {
+                        putStringArrayListExtra(EXTRA_ACCOUNT_HANDLES, successHandles)
+                        putStringArrayListExtra(EXTRA_ACCOUNT_DIDS, successDids)
+                        putStringArrayListExtra(EXTRA_ACCOUNT_JWTS, successJwts)
+                    }
+                    startActivity(intent)
+                    finish()
                 }
             }
         }
