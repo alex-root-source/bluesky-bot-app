@@ -55,8 +55,11 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   bool _autoReplyRunning = false;
   Timer? _autoReplyTimer;
 
+  // التفاعل الجماعي وسحب الحسابات
+  final _postUrlForScrapeController = TextEditingController();
   final _engagementHandlesController = TextEditingController();
   final _engagementCommentController = TextEditingController();
+  bool _isScraping = false;
   bool _engagementRunning = false;
 
   final _followHandlesController = TextEditingController();
@@ -74,7 +77,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     });
   }
 
-  // --- 1. تسجيل الدخول عبر REST API ---
+  // --- 1. تسجيل الدخول ---
   Future<void> _login() async {
     final handle = _handleController.text.trim();
     final password = _appPasswordController.text.trim();
@@ -95,7 +98,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = jsonEncode(response.body);
         _accessJwt = data['accessJwt'];
         _userDid = data['did'];
         setState(() => _isLoggedIn = true);
@@ -110,6 +113,85 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
   }
 
+  // --- ميزة سحب الحسابات المتقدمة (دمج الريبوست واللايكات مع تصفية المكرر) ---
+  Future<void> _fetchRepostedAndLikedUsers() async {
+    final rawUrl = _postUrlForScrapeController.text.trim();
+    if (rawUrl.isEmpty) {
+      _addLog('خطأ: أدخل رابط المنشور أولاً لسحب الحسابات.');
+      return;
+    }
+
+    setState(() => _isScraping = true);
+    _addLog('جاري استخراج وتصفية الحسابات الفريدة من المنشور...');
+
+    try {
+      String atUri = rawUrl;
+      if (rawUrl.contains('bsky.app/profile/')) {
+        final parts = rawUrl.split('/post/');
+        if (parts.length == 2) {
+          final handleOrDid = parts[0].split('/').last;
+          final postId = parts[1].split('?').first;
+          
+          final resolveRes = await http.get(
+            Uri.parse('https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$handleOrDid'),
+          );
+          if (resolveRes.statusCode == 200) {
+            final did = jsonDecode(resolveRes.body)['did'];
+            atUri = 'at://$did/app.bsky.feed.post/$postId';
+          }
+        }
+      }
+
+      // استخدمنا Set لمنع تكرار أي اسم إطلاقاً
+      final Set<String> uniqueHandles = {};
+
+      final authHeader = _accessJwt != null ? {'Authorization': 'Bearer $_accessJwt'} : <String, String>{};
+
+      // 1. جلب من قاموا بالـ Repost
+      final repostRes = await http.get(
+        Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getRepostedBy?uri=${Uri.encodeComponent(atUri)}&limit=100'),
+        headers: authHeader,
+      );
+
+      if (repostRes.statusCode == 200) {
+        final data = jsonDecode(repostRes.body);
+        final List reprs = data['repostedBy'] ?? [];
+        for (var u in reprs) {
+          if (u['handle'] != null) uniqueHandles.add(u['handle'].toString());
+        }
+      }
+
+      // 2. جلب من قاموا بالـ Like
+      final likeRes = await http.get(
+        Uri.parse('https://bsky.social/xrpc/app.bsky.feed.getLikes?uri=${Uri.encodeComponent(atUri)}&limit=100'),
+        headers: authHeader,
+      );
+
+      if (likeRes.statusCode == 200) {
+        final data = jsonDecode(likeRes.body);
+        final List likes = data['likes'] ?? [];
+        for (var l in likes) {
+          if (l['actor'] != null && l['actor']['handle'] != null) {
+            uniqueHandles.add(l['actor']['handle'].toString());
+          }
+        }
+      }
+
+      if (uniqueHandles.isNotEmpty) {
+        setState(() {
+          _engagementHandlesController.text = uniqueHandles.toList().join('\n');
+        });
+        _addLog('تم سحب وتصفية ${uniqueHandles.length} حساباً فريداً (بدون تكرار)!');
+      } else {
+        _addLog('لم يتم العثور على أي تفاعلات فريدة لهذا المنشور.');
+      }
+    } catch (e) {
+      _addLog('خطأ أثناء سحب الحسابات: $e');
+    } finally {
+      setState(() => _isScraping = false);
+    }
+  }
+
   // --- 2. الرد الآلي ---
   Future<void> _processAutoReply() async {
     if (!_isLoggedIn || _accessJwt == null) return;
@@ -121,7 +203,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       return;
     }
 
-    // تقسيم الردود واختيار سطر عشوائي
     final replyList = rawReplies.split('\n').where((r) => r.trim().isNotEmpty).toList();
     final selectedReply = replyList[_random.nextInt(replyList.length)].trim();
 
@@ -177,7 +258,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
-  // --- 3. التفاعل الجماعي المطور (تعليقات متناوبة عشوائية) ---
+  // --- 3. التفاعل الجماعي ---
   Future<void> _startMassEngagement() async {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -196,19 +277,18 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     final commentsList = rawComments.split('\n').where((c) => c.trim().isNotEmpty).toList();
 
     setState(() => _engagementRunning = true);
-    _addLog('بدء التفاعل مع ${handles.length} حسابات...');
+    _addLog('بدء التفاعل مع ${handles.length} حسابات فريدة...');
 
     for (String handle in handles) {
       if (!_engagementRunning) break;
       final cleanHandle = handle.trim().replaceAll('@', '');
 
-      // اختيار تعليق عشوائي من القائمة إذا كانت الخانة تحتوي على عدة أسطر
       String? currentComment;
       if (commentsList.isNotEmpty) {
         currentComment = commentsList[_random.nextInt(commentsList.length)].trim();
       }
 
-      _addLog('معالجة الحساب: $cleanHandle ${currentComment != null ? "باسم تعليق: \"$currentComment\"" : ""}');
+      _addLog('معالجة الحساب: $cleanHandle ${currentComment != null ? "بـ: \"$currentComment\"" : ""}');
 
       await Future.delayed(const Duration(seconds: 5));
     }
@@ -266,6 +346,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _appPasswordController.dispose();
     _targetPostUriController.dispose();
     _replyMessageController.dispose();
+    _postUrlForScrapeController.dispose();
     _engagementHandlesController.dispose();
     _engagementCommentController.dispose();
     _followHandlesController.dispose();
@@ -385,7 +466,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
             controller: _replyMessageController,
             maxLines: 4,
             decoration: const InputDecoration(
-              labelText: 'قائمة نصوص الرد الآلي (ضع كل تعليق في سطر ليتم الاختيار بينها عشوائياً)',
+              labelText: 'قائمة نصوص الرد الآلي (ضع كل تعليق في سطر)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -421,20 +502,42 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       padding: const EdgeInsets.all(16.0),
       child: ListView(
         children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _postUrlForScrapeController,
+                  decoration: const InputDecoration(
+                    labelText: 'رابط المنشور لسحب الحسابات',
+                    hintText: 'https://bsky.app/profile/.../post/...',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: _isScraping ? null : _fetchRepostedAndLikedUsers,
+                icon: const Icon(Icons.download),
+                label: Text(_isScraping ? 'سحب...' : 'سحب'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.cyan),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           TextField(
             controller: _engagementHandlesController,
-            maxLines: 4,
+            maxLines: 5,
             decoration: const InputDecoration(
-              labelText: 'قائمة الحسابات المستهدفة (اسم في كل سطر)',
+              labelText: 'الحسابات الفريدة المستهدفة (تُمنع المكررة أوتوماتيكياً)',
               border: OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _engagementCommentController,
-            maxLines: 4,
+            maxLines: 3,
             decoration: const InputDecoration(
-              labelText: 'قائمة التعليقات المتناوبة (أدخل كل تعليق في سطر لاختياره عشوائياً لكل حساب)',
+              labelText: 'قائمة التعليقات المتناوبة (تعليق في كل سطر)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -502,40 +605,4 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
                   onPressed: !_followRunning ? null : _stopScheduledFollow,
                   icon: const Icon(Icons.pause),
                   label: const Text('إيقاف'),
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildLogViewer() {
-    return Container(
-      height: 180,
-      width: double.infinity,
-      color: Colors.black45,
-      padding: const EdgeInsets.all(8.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('سجل السجلات والعمليات الحية:', style: TextStyle(color: Colors.grey, fontSize: 12)),
-          const Divider(color: Colors.white24),
-          Expanded(
-            child: ListView.builder(
-              itemCount: _logs.length,
-              itemBuilder: (context, index) {
-                return Text(
-                  _logs[index],
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Colors.greenAccent),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+                  style: ElevatedButt
