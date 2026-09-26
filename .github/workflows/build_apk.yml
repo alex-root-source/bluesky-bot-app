@@ -24,12 +24,9 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Rebuild Android Clean Core
+      - name: Configure Android Project
         run: |
-          rm -rf android
           flutter create --platforms=android --org com.bluesky.bot .
-          
-          # Adjust minSdkVersion to 28 (Android 9.0+)
           sed -i 's/minSdkVersion .*/minSdkVersion 28/g' android/app/build.gradle || true
           sed -i 's/flutter.minSdkVersion/28/g' android/app/build.gradle || true
 
@@ -39,7 +36,7 @@ jobs:
       - name: Build Debug APK
         run: flutter build apk --debug
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: bluesky-bot-app
