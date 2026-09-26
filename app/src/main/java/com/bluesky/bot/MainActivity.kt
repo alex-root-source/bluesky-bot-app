@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
         val loginBtn = findViewById<Button>(R.id.loginBtn)
         val handlesInput = findViewById<EditText>(R.id.handlesInput)
         val commentInput = findViewById<EditText>(R.id.commentInput)
+        val delayInput = findViewById<EditText>(R.id.delayInput)
         val startBtn = findViewById<Button>(R.id.startBtn)
         val stopBtn = findViewById<Button>(R.id.stopBtn)
         val logText = findViewById<TextView>(R.id.logText)
@@ -91,6 +92,7 @@ class MainActivity : AppCompatActivity() {
             val rawHandles = handlesInput.text.toString()
             val handles = rawHandles.split("\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
             val comment = commentInput.text.toString().trim().ifEmpty { "شكراً لك" }
+            val delaySeconds = delayInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 10
 
             if (handles.isEmpty()) {
                 addLog("خطأ: أدخل قائمة الحسابات المستهدفة.")
@@ -98,7 +100,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             isEngagementRunning = true
-            addLog("بدء التفاعل مع ${handles.size} حساب فريد...")
+            addLog("بدء التفاعل مع ${handles.size} حساب فريد... (التأخير: $delaySeconds ثانية)")
 
             scope.launch(Dispatchers.IO) {
                 for (handle in handles) {
@@ -176,7 +178,7 @@ class MainActivity : AppCompatActivity() {
                         withContext(Dispatchers.Main) { addLog("خطأ مع $cleanHandle: ${e.message}") }
                     }
 
-                    for (i in 0 until 10) {
+                    for (i in 0 until delaySeconds) {
                         if (!isEngagementRunning) break
                         delay(1000)
                     }
