@@ -24,16 +24,16 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Rebuild Project Structure
+      - name: Rebuild Project Environment
         run: |
           rm -rf android ios pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
 
-      - name: Add HTTP Dependency
+      - name: Install HTTP Dependency
         run: flutter pub add http
 
-      - name: Restore Custom Code
-        run: git checkout HEAD -- lib/main.dart
+      - name: Get Dependencies
+        run: flutter pub get
 
       - name: Build APK
         run: flutter build apk --debug --no-tree-shake-icons
