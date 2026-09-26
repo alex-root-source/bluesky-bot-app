@@ -24,7 +24,7 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Clean Rebuild
+      - name: Clean Rebuild Structure
         run: |
           rm -rf android ios lib pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
@@ -32,6 +32,7 @@ jobs:
 
       - name: Write main.dart
         run: |
+          mkdir -p lib
           cat << 'EOF' > lib/main.dart
           import 'dart:async';
           import 'dart:convert';
@@ -505,5 +506,4 @@ jobs:
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                           ),
                         ),
-                        const SizedBox(width: 10),
-               
+                        const Siz
