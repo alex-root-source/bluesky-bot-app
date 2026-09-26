@@ -91,24 +91,29 @@ class MainActivity : AppCompatActivity() {
 
             val rawHandles = handlesInput.text.toString()
             val handles = rawHandles.split("\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            val comment = commentInput.text.toString().trim().ifEmpty { "شكراً لك" }
+            val comments = commentInput.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
             val delaySeconds = delayInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 10
 
             if (handles.isEmpty()) {
                 addLog("خطأ: أدخل قائمة الحسابات المستهدفة.")
                 return@setOnClickListener
             }
+            if (comments.isEmpty()) {
+                addLog("خطأ: أدخل تعليق واحد على الأقل (كل سطر = تعليق مستقل).")
+                return@setOnClickListener
+            }
 
             isEngagementRunning = true
-            addLog("بدء التفاعل مع ${handles.size} حساب فريد... (التأخير: $delaySeconds ثانية)")
+            addLog("بدء التفاعل مع ${handles.size} حساب فريد، باستخدام ${comments.size} نص تعليق مختلف... (التأخير: $delaySeconds ثانية)")
 
             scope.launch(Dispatchers.IO) {
-                for (handle in handles) {
+                for ((index, handle) in handles.withIndex()) {
                     if (!isEngagementRunning) {
                         withContext(Dispatchers.Main) { addLog("تم إيقاف التفاعل بواسطة المستخدم.") }
                         break
                     }
 
+                    val comment = comments[index % comments.size]
                     val cleanHandle = handle.replace("@", "")
 
                     try {
