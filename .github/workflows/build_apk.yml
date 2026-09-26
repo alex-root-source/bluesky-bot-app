@@ -35,14 +35,6 @@ jobs:
       - name: Restore Custom Code
         run: git checkout HEAD -- lib/main.dart
 
-      - name: Replace App Icons Direct
-        run: |
-          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png 2>/dev/null || true
-          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png 2>/dev/null || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png 2>/dev/null || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png 2>/dev/null || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png 2>/dev/null || true
-
       - name: Build APK
         run: flutter build apk --debug --no-tree-shake-icons
 
