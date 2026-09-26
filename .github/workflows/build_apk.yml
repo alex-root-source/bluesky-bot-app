@@ -24,19 +24,19 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Skeleton
+      - name: Generate Android Project
         run: flutter create . --platforms=android --org=com.bluesky.bot
+
+      - name: Add HTTP Dependency
+        run: flutter pub add http
 
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Generate Launcher Icons
-        run: flutter pub run flutter_launcher_icons
-
       - name: Build APK
         run: flutter build apk --debug
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: bluesky-bot-app-release
