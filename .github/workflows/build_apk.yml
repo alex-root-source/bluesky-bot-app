@@ -24,21 +24,20 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Platform Files
+      - name: Clean Rebuild Structure
         run: |
           rm -rf android ios pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
           flutter pub add http
 
-      - name: Install Dependencies
+      - name: Get Dependencies
         run: flutter pub get
 
-      - name: Build APK
+      - name: Build Debug APK
         run: flutter build apk --debug
 
-      - name: Upload All Generated APKs
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: bluesky-bot-app
-          path: '**/*.apk'
-          
+          path: build/app/outputs/flutter-apk/app-debug.apk
