@@ -24,12 +24,12 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Rebuild Project Workspace
+      - name: Setup Project Clean Environment
         run: |
           rm -rf android ios lib pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
 
-      - name: Inject Valid main.dart
+      - name: Inject Complete Working main.dart
         run: |
           mkdir -p lib
           cat << 'EOF' > lib/main.dart
@@ -509,5 +509,4 @@ jobs:
                               decoration: const InputDecoration(
                                 labelText: 'المعرف (Handle)',
                                 hintText: 'user.bsky.social',
-                                border: OutlineInputBorder(),
-           
+                                border: OutlineInputBord
