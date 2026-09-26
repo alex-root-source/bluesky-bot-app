@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bluesky Handle Scraper - أداة سحب الحسابات</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            background-color: #0f172a;
+            color: #f8fafc;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            background-color: #1e293b;
+            border-radius: 12px;
+            padding: 25px;
+            width: 100%;
+            max-width: 600px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        h2 {
+            text-align: center;
+            color: #38bdf8;
+            margin-bottom: 20px;
+        }
+        .card {
+            background-color: #334155;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 14px;
+            color: #cbd5e1;
+        }
+        input, textarea {
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #475569;
+            background-color: #0f172a;
+            color: #fff;
+            margin-bottom: 12px;
+            font-size: 14px;
+        }
+        input:focus, textarea:focus {
+            outline: none;
+            border-color: #38bdf8;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            background-color: #0284c7;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            background-color: #0369a1;
+        }
+        button:disabled {
+            background-color: #64748b;
+            cursor: not-allowed;
+        }
+        .btn-success {
+            background-color: #16a34a;
+        }
+        .btn-success:hover {
+            background-color: #15803d;
+        }
+        .log-box {
+            background-color: #090d16;
+            color: #4ade80;
+            font-family: monospace;
+            padding: 10px;
+            border-radius: 6px;
+            height: 120px;
+            overflow-y: auto;
+            font-size: 12px;
+            margin-top: 15px;
+        }
+        .status {
+            text-align: center;
+            font-size: 13px;
+            color: #fbbf24;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>🤖 بوت سحب أسماء الحسابات من Bluesky</h2>
+
+    <!-- قسم تسجيل الدخول -->
+    <div class="card">
+        <label>المعرف (Handle):</label>
+        <input type="text" id="handle" placeholder="مثال: user.bsky.social">
+        
+        <label>كلمة مرور التطبيق (App Password):</label>
+        <input type="password" id="appPassword" placeholder="xxxx-xxxx-xxxx-xxxx">
+        
+        <button id="loginBtn" onclick="login()">تسجيل الدخول</button>
+        <div id="loginStatus" class="status">غير متصل</div>
+    </div>
+
+    <!-- قسم سحب الحسابات -->
+    <div class="card">
+        <label>رابط المنشور المراد سحب الحسابات منه:</label>
+        <input type="text" id="postUrl" placeholder="https://bsky.app/profile/.../post/...">
+        
+        <button id="scrapeBtn" onclick="fetchUsers()" disabled>سحب الحسابات الفريدة</button>
+
+        <label style="margin-top: 10px;">قائمة الحسابات المستخرجة (بدون تكرار):</label>
+        <textarea id="resultHandles" rows="6" readonly placeholder="ستظهر الحسابات هنا..."></textarea>
+        
+        <button id="copyBtn" class="btn-success" onclick="copyResults()" style="display:none;">نسخ القائمة</button>
+    </div>
+
+    <!-- سجل العمليات -->
+    <div class="log-box" id="logs">
+        [النظام] جاهز للعمل...
+    </div>
+</div>
+
+<script>
+    let accessJwt = null;
+
+    function addLog(msg) {
+        const time = new Date().toLocaleTimeString('ar-EG');
+        const logBox = document.getElementById('logs');
+        logBox.innerHTML = `[${time}] ${msg}<br>` + logBox.innerHTML;
+    }
+
+    async function login() {
+        const handle = document.getElementById('handle').value.trim();
+        const password = document.getElementById('appPassword').value.trim();
+
+        if (!handle || !password) {
+            alert('يرجى إدخال اسم المستخدم وكلمة مرور التطبيق');
+            return;
+        }
+
+        addLog('جاري الاتصال وسيرفر Bluesky...');
+        document.getElementById('loginBtn').disabled = true;
+
+        try {
+            const response = await fetch('https://bsky.social/xrpc/com.atproto.server.createSession', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ identifier: handle, password: password })
+            });
+
+            const data = await response.json();
+
+            if (response.ok) {
+                accessJwt = data.accessJwt;
+                document.getElementById('loginStatus').innerText = 'تم الاتصال بنجاح ✔️';
+                document.getElementById('loginStatus').style.color = '#4ade80';
+                document.getElementById('scrapeBtn').disabled = false;
+                addLog('تم تسجيل الدخول بنجاح!');
+            } else {
+                addLog('فشل تسجيل الدخول: ' + (data.message || 'بيانات غير صحيحة'));
+                document.getElementById('loginBtn').disabled = false;
+            }
+        } catch (e) {
+            addLog('خطأ في الاتصال بالشبكة: ' + e.message);
+            document.getElementById('loginBtn').disabled = false;
+        }
+    }
+
+    async function fetchUsers() {
+        const rawUrl = document.getElementById('postUrl').value.trim();
+        if (!rawUrl) {
+            alert('يرجى إدخال رابط المنشور');
+            return;
+        }
+
+        addLog('جاري معالجة رابط المنشور واستخراج البيانات...');
+        document.getElementById('scrapeBtn').disabled = true;
+
+        try {
+            let atUri = rawUrl;
+
+            // تحويل رابط الويب إلى AT URI
+            if (rawUrl.includes('bsky.app/profile/')) {
+                const parts = rawUrl.split('/post/');
+                if (parts.length === 2) {
+                    const handleOrDid = parts[0].split('/').pop();
+                    const postId = parts[1].split('?')[0];
+
+                    const resolveRes = await fetch(`https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${handleOrDid}`);
+                    if (resolveRes.ok) {
+                        const resolveData = await resolveRes.json();
+                        atUri = `at://${resolveData.did}/app.bsky.feed.post/${postId}`;
+                    }
+                }
+            }
+
+            const uniqueHandles = new Set();
+            const headers = accessJwt ? { 'Authorization': `Bearer ${accessJwt}` } : {};
+
+            // 1. جلب Reposts
+            const repostRes = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getRepostedBy?uri=${encodeURIComponent(atUri)}&limit=100`, { headers });
+            if (repostRes.ok) {
+                const repostData = await repostRes.json();
+                (repostData.repostedBy || []).forEach(u => {
+                    if (u.handle) uniqueHandles.add(u.handle);
+                });
+            }
+
+            // 2. جلب Likes
+            const likeRes = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getLikes?uri=${encodeURIComponent(atUri)}&limit=100`, { headers });
+            if (likeRes.ok) {
+                const likeData = await likeRes.json();
+                (likeData.likes || []).forEach(l => {
+                    if (l.actor && l.actor.handle) uniqueHandles.add(l.actor.handle);
+                });
+            }
+
+            if (uniqueHandles.size > 0) {
+                const resultList = Array.from(uniqueHandles).join('\n');
+                document.getElementById('resultHandles').value = resultList;
+                document.getElementById('copyBtn').style.display = 'block';
+                addLog(`تم استخراج ${uniqueHandles.size} حساب فريد بدون تكرار!`);
+            } else {
+                addLog('لم يتم العثور على أي تفاعلات أو حسابات لهذا المنشور.');
+            }
+
+        } catch (e) {
+            addLog('خطأ أثناء سحب البيانات: ' + e.message);
+        } finally {
+            document.getElementById('scrapeBtn').disabled = false;
+        }
+    }
+
+    function copyResults() {
+        const resultText = document.getElementById('resultHandles');
+        resultText.select();
+        document.execCommand('copy');
+        alert('تم نسخ القائمة إلى الحافظة بنجاح!');
+    }
+</script>
+
+</body>
+</html>
