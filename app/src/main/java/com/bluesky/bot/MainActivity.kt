@@ -1,13 +1,28 @@
 package com.bluesky.bot
 
+import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.*
-import okhttp3.*
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.time.LocalTime
@@ -16,30 +31,53 @@ import java.time.format.DateTimeFormatter
 class MainActivity : AppCompatActivity() {
 
     private val client = OkHttpClient()
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val loginScope = CoroutineScope(Dispatchers.Main + Job())
 
     private var accessJwt: String? = null
     private var userDid: String? = null
-    private var isEngagementRunning = false
+
+    private lateinit var handleInput: EditText
+    private lateinit var passwordInput: EditText
+    private lateinit var loginBtn: Button
+    private lateinit var handlesInput: EditText
+    private lateinit var commentInput: EditText
+    private lateinit var delayInput: EditText
+    private lateinit var startBtn: Button
+    private lateinit var stopBtn: Button
+    private lateinit var logText: TextView
+
+    private val notificationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+
+    private val logReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                EngagementService.BROADCAST_LOG -> {
+                    val msg = intent.getStringExtra(EngagementService.EXTRA_LOG_MESSAGE) ?: return
+                    addLog(msg)
+                }
+                EngagementService.BROADCAST_FINISHED -> {
+                    startBtn.isEnabled = true
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val handleInput = findViewById<EditText>(R.id.handleInput)
-        val passwordInput = findViewById<EditText>(R.id.passwordInput)
-        val loginBtn = findViewById<Button>(R.id.loginBtn)
-        val handlesInput = findViewById<EditText>(R.id.handlesInput)
-        val commentInput = findViewById<EditText>(R.id.commentInput)
-        val delayInput = findViewById<EditText>(R.id.delayInput)
-        val startBtn = findViewById<Button>(R.id.startBtn)
-        val stopBtn = findViewById<Button>(R.id.stopBtn)
-        val logText = findViewById<TextView>(R.id.logText)
+        handleInput = findViewById(R.id.handleInput)
+        passwordInput = findViewById(R.id.passwordInput)
+        loginBtn = findViewById(R.id.loginBtn)
+        handlesInput = findViewById(R.id.handlesInput)
+        commentInput = findViewById(R.id.commentInput)
+        delayInput = findViewById(R.id.delayInput)
+        startBtn = findViewById(R.id.startBtn)
+        stopBtn = findViewById(R.id.stopBtn)
+        logText = findViewById(R.id.logText)
 
-        fun addLog(msg: String) {
-            val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-            logText.append("[$time] $msg\n")
-        }
+        requestNotificationPermissionIfNeeded()
 
         loginBtn.setOnClickListener {
             val handle = handleInput.text.toString().trim()
@@ -49,7 +87,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            scope.launch(Dispatchers.IO) {
+            loginScope.launch(Dispatchers.IO) {
                 try {
                     val json = JSONObject().apply {
                         put("identifier", handle)
@@ -84,14 +122,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         startBtn.setOnClickListener {
-            if (accessJwt == null) {
+            val jwt = accessJwt
+            val did = userDid
+            if (jwt == null || did == null) {
                 addLog("تنبيه: يلزم تسجيل الدخول أولاً.")
                 return@setOnClickListener
             }
 
-            val rawHandles = handlesInput.text.toString()
-            val handles = rawHandles.split("\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
-            val comments = commentInput.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+            val handles = handlesInput.text.toString()
+                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val comments = commentInput.text.toString()
+                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
             val delaySeconds = delayInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 10
 
             if (handles.isEmpty()) {
@@ -103,104 +144,62 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            isEngagementRunning = true
-            addLog("بدء التفاعل مع ${handles.size} حساب فريد، باستخدام ${comments.size} نص تعليق مختلف... (التأخير: $delaySeconds ثانية)")
-
-            scope.launch(Dispatchers.IO) {
-                for ((index, handle) in handles.withIndex()) {
-                    if (!isEngagementRunning) {
-                        withContext(Dispatchers.Main) { addLog("تم إيقاف التفاعل بواسطة المستخدم.") }
-                        break
-                    }
-
-                    val comment = comments[index % comments.size]
-                    val cleanHandle = handle.replace("@", "")
-
-                    try {
-                        val resolveReq = Request.Builder()
-                            .url("https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$cleanHandle")
-                            .build()
-                        val resolveRes = client.newCall(resolveReq).execute()
-
-                        if (resolveRes.isSuccessful) {
-                            val targetDid = JSONObject(resolveRes.body?.string() ?: "").getString("did")
-
-                            val feedReq = Request.Builder()
-                                .url("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?actor=$targetDid&limit=1")
-                                .addHeader("Authorization", "Bearer $accessJwt")
-                                .build()
-                            val feedRes = client.newCall(feedReq).execute()
-
-                            if (feedRes.isSuccessful) {
-                                val feedArray = JSONObject(feedRes.body?.string() ?: "").getJSONArray("feed")
-                                if (feedArray.length() > 0) {
-                                    val post = feedArray.getJSONObject(0).getJSONObject("post")
-                                    val postUri = post.getString("uri")
-                                    val postCid = post.getString("cid")
-
-                                    val replyRecord = JSONObject().apply {
-                                        put("text", comment)
-                                        put("createdAt", java.time.Instant.now().toString())
-                                        put("reply", JSONObject().apply {
-                                            put("root", JSONObject().apply {
-                                                put("uri", postUri)
-                                                put("cid", postCid)
-                                            })
-                                            put("parent", JSONObject().apply {
-                                                put("uri", postUri)
-                                                put("cid", postCid)
-                                            })
-                                        })
-                                    }
-
-                                    val createRecordJson = JSONObject().apply {
-                                        put("repo", userDid)
-                                        put("collection", "app.bsky.feed.post")
-                                        put("record", replyRecord)
-                                    }
-
-                                    val postBody = createRecordJson.toString().toRequestBody("application/json".toMediaType())
-                                    val commentReq = Request.Builder()
-                                        .url("https://bsky.social/xrpc/com.atproto.repo.createRecord")
-                                        .addHeader("Authorization", "Bearer $accessJwt")
-                                        .post(postBody)
-                                        .build()
-
-                                    val commentRes = client.newCall(commentReq).execute()
-                                    if (commentRes.isSuccessful) {
-                                        withContext(Dispatchers.Main) { addLog("تم التعليق بنجاح على $cleanHandle: \"$comment\"") }
-                                    } else {
-                                        withContext(Dispatchers.Main) { addLog("فشل التعليق على $cleanHandle") }
-                                    }
-                                } else {
-                                    withContext(Dispatchers.Main) { addLog("لا توجد منشورات للحساب $cleanHandle") }
-                                }
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) { addLog("تعذر العثور على $cleanHandle") }
-                        }
-                    } catch (e: Exception) {
-                        withContext(Dispatchers.Main) { addLog("خطأ مع $cleanHandle: ${e.message}") }
-                    }
-
-                    for (i in 0 until delaySeconds) {
-                        if (!isEngagementRunning) break
-                        delay(1000)
-                    }
-                }
-                isEngagementRunning = false
-                withContext(Dispatchers.Main) { addLog("اكتملت العملية بالكامل!") }
+            val serviceIntent = Intent(this, EngagementService::class.java).apply {
+                action = EngagementService.ACTION_START
+                putExtra(EngagementService.EXTRA_ACCESS_JWT, jwt)
+                putExtra(EngagementService.EXTRA_USER_DID, did)
+                putStringArrayListExtra(EngagementService.EXTRA_HANDLES, ArrayList(handles))
+                putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
+                putExtra(EngagementService.EXTRA_DELAY_SECONDS, delaySeconds)
             }
+            ContextCompat.startForegroundService(this, serviceIntent)
+            startBtn.isEnabled = false
+            addLog("تم إرسال المهمة إلى الخدمة الخلفية (Foreground Service)...")
         }
 
         stopBtn.setOnClickListener {
-            isEngagementRunning = false
-            addLog("جاري إيقاف العملية...")
+            val stopIntent = Intent(this, EngagementService::class.java).apply {
+                action = EngagementService.ACTION_STOP
+            }
+            startService(stopIntent)
+            startBtn.isEnabled = true
         }
+    }
+
+    private fun addLog(msg: String) {
+        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        logText.append("[$time] $msg\n")
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter().apply {
+            addAction(EngagementService.BROADCAST_LOG)
+            addAction(EngagementService.BROADCAST_FINISHED)
+        }
+        ContextCompat.registerReceiver(
+            this, logReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+    }
+
+    override fun onStop() {
+        super.onStop()
+        unregisterReceiver(logReceiver)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        scope.cancel()
+        loginScope.cancel()
     }
 }
