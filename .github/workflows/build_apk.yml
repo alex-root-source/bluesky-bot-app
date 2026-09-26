@@ -33,8 +33,11 @@ jobs:
       - name: Write Working main.dart Code
         run: |
           cat << 'EOF' > lib/main.dart
+          import 'dart0:convert'.replaceAll('0', '');
+          EOF
+          cat << 'EOF' > lib/main.dart
           import 'dart:async';
-          import 'dart0:convert';
+          import 'dart:convert';
           import 'dart:math';
           import 'package:flutter/material.dart';
           import 'package:http/http.dart' as http;
@@ -503,7 +506,4 @@ jobs:
                             icon: const Icon(Icons.play_arrow),
                             label: const Text('تشغيل الرد الآلي'),
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
- 
+  
