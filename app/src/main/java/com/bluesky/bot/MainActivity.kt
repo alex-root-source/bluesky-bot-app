@@ -26,6 +26,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loggedInAsText: TextView
     private lateinit var logoutBtn: TextView
     private lateinit var handlesInput: EditText
+    private lateinit var excludeInput: EditText
     private lateinit var commentInput: EditText
     private lateinit var delayInput: EditText
     private lateinit var startBtn: Button
@@ -57,7 +58,6 @@ class MainActivity : AppCompatActivity() {
         accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
 
         if (accountHandles.isEmpty()) {
-            // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -68,6 +68,7 @@ class MainActivity : AppCompatActivity() {
         loggedInAsText = findViewById(R.id.loggedInAsText)
         logoutBtn = findViewById(R.id.logoutBtn)
         handlesInput = findViewById(R.id.handlesInput)
+        excludeInput = findViewById(R.id.excludeInput)
         commentInput = findViewById(R.id.commentInput)
         delayInput = findViewById(R.id.delayInput)
         startBtn = findViewById(R.id.startBtn)
@@ -84,8 +85,24 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            val handles = handlesInput.text.toString()
-                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val rawLines = handlesInput.text.toString()
+                .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+            val normalizedAll = rawLines.map { normalizeHandle(it) }.filter { it.isNotEmpty() }
+            val uniqueHandles = normalizedAll.distinct()
+            val duplicatesRemoved = normalizedAll.size - uniqueHandles.size
+
+            val excludedSet = excludeInput.text.toString()
+                .split("\n").map { normalizeHandle(it) }.filter { it.isNotEmpty() }.toSet()
+            val handles = uniqueHandles.filterNot { excludedSet.contains(it) }
+            val excludedRemoved = uniqueHandles.size - handles.size
+
+            if (duplicatesRemoved > 0) {
+                addLog("تم إزالة $duplicatesRemoved اسم مكرر من قائمة الأهداف.")
+            }
+            if (excludedRemoved > 0) {
+                addLog("تم استبعاد $excludedRemoved حساب حسب قائمة الاستثناء.")
+            }
+
             val comments = commentInput.text.toString()
                 .split("\n").map { it.trim() }.filter { it.isNotEmpty() }
             val delaySeconds = delayInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(1) ?: 10
@@ -139,6 +156,40 @@ class MainActivity : AppCompatActivity() {
     private fun addLog(msg: String) {
         val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
         logText.append("[$time] $msg\n")
+    }
+
+    /**
+     * يحوّل أي صيغة مكتوبة (رابط كامل، بـ @، بأحرف كبيرة...) إلى هاندل نظيف موحّد،
+     * حتى تقدر المقارنة والفلترة (تكرار/استبعاد) تشتغل بشكل صحيح.
+     * أمثلة تدخل كلها لنفس النتيجة "micheeel.bsky.social":
+     *   - "https://bsky.app/profile/micheeel.bsky.social"
+     *   - "https://bsky.app/profile/micheeel.bsky.social/post/xyz"
+     *   - "@Micheeel.bsky.social"
+     *   - "  micheeel.bsky.social  "
+     */
+    private fun normalizeHandle(raw: String): String {
+        var h = raw.trim()
+        if (h.isEmpty()) return ""
+
+        val profileMarker = "bsky.app/profile/"
+        val markerIdx = h.indexOf(profileMarker)
+        if (markerIdx != -1) {
+            h = h.substring(markerIdx + profileMarker.length)
+        }
+
+        h = h.removePrefix("@")
+
+        val slashIdx = h.indexOf("/")
+        if (slashIdx != -1) {
+            h = h.substring(0, slashIdx)
+        }
+
+        val queryIdx = h.indexOf("?")
+        if (queryIdx != -1) {
+            h = h.substring(0, queryIdx)
+        }
+
+        return h.trim().lowercase()
     }
 
     private fun requestNotificationPermissionIfNeeded() {
