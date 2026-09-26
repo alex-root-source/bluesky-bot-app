@@ -55,7 +55,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   bool _autoReplyRunning = false;
   Timer? _autoReplyTimer;
 
-  // إضافات سحب وتصفية الحسابات
   final _postUrlForScrapeController = TextEditingController();
   final _engagementHandlesController = TextEditingController();
   final _engagementCommentController = TextEditingController();
@@ -112,7 +111,6 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
   }
 
-  // دالة سحب وتصفية الحسابات المضافة
   Future<void> _fetchUsersFromPost() async {
     final rawUrl = _postUrlForScrapeController.text.trim();
     if (rawUrl.isEmpty) {
@@ -527,7 +525,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
             controller: _engagementCommentController,
             maxLines: 3,
             decoration: const InputDecoration(
-              labelText: 'قائمة التعليقات (ضع كل تعليق في سطر)',
+              labelText: 'قائمة التعليقات (تعليق في كل سطر)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -614,4 +612,5 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('سجل السجلات والعمليات الحية:', style: Tex
+          const Text('سجل السجلات والعمليات الحية:', style: TextStyle(color: Colors.grey, fontSize: 12)),
+          const Divider(color:
