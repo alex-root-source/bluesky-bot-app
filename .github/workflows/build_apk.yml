@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -505,5 +507,4 @@ jobs:
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        Exp
+                        const SizedBox(
