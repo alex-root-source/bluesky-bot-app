@@ -50,12 +50,12 @@ jobs:
       - name: Generate Launcher Icons
         run: flutter pub run flutter_launcher_icons
 
-      - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+      - name: Build APK (Debug Mode for Guaranteed Output)
+        run: flutter build apk --debug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: bluesky-bot-app-release
-          path: build/app/outputs/flutter-apk/app-release.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
           
