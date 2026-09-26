@@ -27,24 +27,11 @@ jobs:
       - name: Generate Android Skeleton
         run: flutter create . --platforms=android --org=com.bluesky.bot
 
-      - name: Add HTTP Package
-        run: flutter pub add http
-
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Replace Default Android Icons with Logo
-        run: |
-          mkdir -p android/app/src/main/res/mipmap-hdpi
-          mkdir -p android/app/src/main/res/mipmap-mdpi
-          mkdir -p android/app/src/main/res/mipmap-xhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
-          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
-          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+      - name: Generate Launcher Icons
+        run: flutter pub run flutter_launcher_icons
 
       - name: Build APK
         run: flutter build apk --debug
