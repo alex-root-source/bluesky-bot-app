@@ -19,9 +19,9 @@ import java.time.format.DateTimeFormatter
 
 class MainActivity : AppCompatActivity() {
 
-    private var accessJwt: String? = null
-    private var userDid: String? = null
-    private var handle: String? = null
+    private var accountHandles: ArrayList<String> = arrayListOf()
+    private var accountDids: ArrayList<String> = arrayListOf()
+    private var accountJwts: ArrayList<String> = arrayListOf()
 
     private lateinit var loggedInAsText: TextView
     private lateinit var logoutBtn: TextView
@@ -52,11 +52,11 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        accessJwt = intent.getStringExtra(LoginActivity.EXTRA_ACCESS_JWT)
-        userDid = intent.getStringExtra(LoginActivity.EXTRA_USER_DID)
-        handle = intent.getStringExtra(LoginActivity.EXTRA_HANDLE)
+        accountHandles = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_HANDLES) ?: arrayListOf()
+        accountDids = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
+        accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
 
-        if (accessJwt == null || userDid == null) {
+        if (accountHandles.isEmpty()) {
             // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
@@ -74,15 +74,13 @@ class MainActivity : AppCompatActivity() {
         stopBtn = findViewById(R.id.stopBtn)
         logText = findViewById(R.id.logText)
 
-        loggedInAsText.text = "مسجل الدخول: ${handle ?: ""}"
+        loggedInAsText.text = "مسجل الدخول بـ ${accountHandles.size} حساب: ${accountHandles.joinToString(", ")}"
 
         requestNotificationPermissionIfNeeded()
 
         startBtn.setOnClickListener {
-            val jwt = accessJwt
-            val did = userDid
-            if (jwt == null || did == null) {
-                addLog("خطأ: انتهت صلاحية الجلسة، يرجى تسجيل الدخول من جديد.")
+            if (accountHandles.isEmpty()) {
+                addLog("خطأ: لا توجد حسابات مسجلة، يرجى تسجيل الدخول من جديد.")
                 return@setOnClickListener
             }
 
@@ -103,15 +101,16 @@ class MainActivity : AppCompatActivity() {
 
             val serviceIntent = Intent(this, EngagementService::class.java).apply {
                 action = EngagementService.ACTION_START
-                putExtra(EngagementService.EXTRA_ACCESS_JWT, jwt)
-                putExtra(EngagementService.EXTRA_USER_DID, did)
-                putStringArrayListExtra(EngagementService.EXTRA_HANDLES, ArrayList(handles))
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_HANDLES, accountHandles)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_DIDS, accountDids)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, accountJwts)
+                putStringArrayListExtra(EngagementService.EXTRA_TARGET_HANDLES, ArrayList(handles))
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
                 putExtra(EngagementService.EXTRA_DELAY_SECONDS, delaySeconds)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
             startBtn.isEnabled = false
-            addLog("تم إرسال المهمة إلى الخدمة الخلفية (Foreground Service)...")
+            addLog("تم إرسال المهمة إلى الخدمة الخلفية، بتوزيع عشوائي على ${accountHandles.size} حساب...")
         }
 
         stopBtn.setOnClickListener {
@@ -128,8 +127,9 @@ class MainActivity : AppCompatActivity() {
             }
             startService(stopIntent)
 
-            accessJwt = null
-            userDid = null
+            accountHandles = arrayListOf()
+            accountDids = arrayListOf()
+            accountJwts = arrayListOf()
 
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
