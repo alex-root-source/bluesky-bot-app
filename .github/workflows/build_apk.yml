@@ -30,27 +30,23 @@ jobs:
       - name: Add HTTP Package
         run: flutter pub add http
 
-      - name: Add Launcher Icons Package
-        run: flutter pub add --dev flutter_launcher_icons
-
-      - name: Configure Launcher Icons
-        run: |
-          cat <<EOF >> pubspec.yaml
-
-          flutter_launcher_icons:
-            android: "launcher_icon"
-            ios: false
-            image_path: "assets/logo.png"
-            min_sdk_android: 21
-          EOF
-
       - name: Get Dependencies
         run: flutter pub get
 
-      - name: Generate Launcher Icons
-        run: flutter pub run flutter_launcher_icons
+      - name: Replace Default Android Icons with Logo
+        run: |
+          mkdir -p android/app/src/main/res/mipmap-hdpi
+          mkdir -p android/app/src/main/res/mipmap-mdpi
+          mkdir -p android/app/src/main/res/mipmap-xhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png
+          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png
+          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 
-      - name: Build APK (Debug Mode for Guaranteed Output)
+      - name: Build APK
         run: flutter build apk --debug
 
       - name: Upload APK
