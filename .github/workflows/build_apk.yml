@@ -24,8 +24,13 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Project
-        run: flutter create . --platforms=android --org=com.bluesky.bot
+      - name: Initialize Clean Flutter App
+        run: |
+          rm -rf android ios lib test pubspec.yaml
+          flutter create . --platforms=android --org=com.bluesky.bot
+
+      - name: Restore Custom main.dart
+        run: git checkout HEAD -- lib/main.dart
 
       - name: Add HTTP Dependency
         run: flutter pub add http
