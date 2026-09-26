@@ -63,6 +63,17 @@
             android:textColorHint="#94A3B8"
             android:layout_marginTop="8dp" />
 
+        <EditText
+            android:id="@+id/delayInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="التأخير بين كل تعليق (بالثواني)"
+            android:inputType="number"
+            android:text="10"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#94A3B8"
+            android:layout_marginTop="8dp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
