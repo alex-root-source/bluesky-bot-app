@@ -14,31 +14,17 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
 class MainActivity : AppCompatActivity() {
 
-    private val client = OkHttpClient()
-    private val loginScope = CoroutineScope(Dispatchers.Main + Job())
-
     private var accessJwt: String? = null
     private var userDid: String? = null
+    private var handle: String? = null
 
-    private lateinit var handleInput: EditText
-    private lateinit var passwordInput: EditText
-    private lateinit var loginBtn: Button
+    private lateinit var loggedInAsText: TextView
+    private lateinit var logoutBtn: TextView
     private lateinit var handlesInput: EditText
     private lateinit var commentInput: EditText
     private lateinit var delayInput: EditText
@@ -65,11 +51,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        accessJwt = intent.getStringExtra(LoginActivity.EXTRA_ACCESS_JWT)
+        userDid = intent.getStringExtra(LoginActivity.EXTRA_USER_DID)
+        handle = intent.getStringExtra(LoginActivity.EXTRA_HANDLE)
+
+        if (accessJwt == null || userDid == null) {
+            // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_main)
 
-        handleInput = findViewById(R.id.handleInput)
-        passwordInput = findViewById(R.id.passwordInput)
-        loginBtn = findViewById(R.id.loginBtn)
+        loggedInAsText = findViewById(R.id.loggedInAsText)
+        logoutBtn = findViewById(R.id.logoutBtn)
         handlesInput = findViewById(R.id.handlesInput)
         commentInput = findViewById(R.id.commentInput)
         delayInput = findViewById(R.id.delayInput)
@@ -77,55 +74,15 @@ class MainActivity : AppCompatActivity() {
         stopBtn = findViewById(R.id.stopBtn)
         logText = findViewById(R.id.logText)
 
+        loggedInAsText.text = "مسجل الدخول: ${handle ?: ""}"
+
         requestNotificationPermissionIfNeeded()
-
-        loginBtn.setOnClickListener {
-            val handle = handleInput.text.toString().trim()
-            val pass = passwordInput.text.toString().trim()
-            if (handle.isEmpty() || pass.isEmpty()) {
-                addLog("خطأ: يرجى إدخل اسم المستخدم وكلمة المرور.")
-                return@setOnClickListener
-            }
-
-            loginScope.launch(Dispatchers.IO) {
-                try {
-                    val json = JSONObject().apply {
-                        put("identifier", handle)
-                        put("password", pass)
-                    }
-                    val body = json.toString().toRequestBody("application/json".toMediaType())
-                    val request = Request.Builder()
-                        .url("https://bsky.social/xrpc/com.atproto.server.createSession")
-                        .post(body)
-                        .build()
-
-                    val response = client.newCall(request).execute()
-                    val resStr = response.body?.string() ?: ""
-                    if (response.isSuccessful) {
-                        val resJson = JSONObject(resStr)
-                        accessJwt = resJson.getString("accessJwt")
-                        userDid = resJson.getString("did")
-                        withContext(Dispatchers.Main) {
-                            addLog("تم تسجيل الدخول بنجاح!")
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            addLog("فشل تسجيل الدخول: $resStr")
-                        }
-                    }
-                } catch (e: Exception) {
-                    withContext(Dispatchers.Main) {
-                        addLog("خطأ شبكة: ${e.message}")
-                    }
-                }
-            }
-        }
 
         startBtn.setOnClickListener {
             val jwt = accessJwt
             val did = userDid
             if (jwt == null || did == null) {
-                addLog("تنبيه: يلزم تسجيل الدخول أولاً.")
+                addLog("خطأ: انتهت صلاحية الجلسة، يرجى تسجيل الدخول من جديد.")
                 return@setOnClickListener
             }
 
@@ -164,6 +121,19 @@ class MainActivity : AppCompatActivity() {
             startService(stopIntent)
             startBtn.isEnabled = true
         }
+
+        logoutBtn.setOnClickListener {
+            val stopIntent = Intent(this, EngagementService::class.java).apply {
+                action = EngagementService.ACTION_STOP
+            }
+            startService(stopIntent)
+
+            accessJwt = null
+            userDid = null
+
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
+        }
     }
 
     private fun addLog(msg: String) {
@@ -196,10 +166,5 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         unregisterReceiver(logReceiver)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        loginScope.cancel()
     }
 }
