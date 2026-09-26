@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
@@ -64,6 +65,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   Timer? _followTimer;
 
   final List<String> _logs = [];
+  final Random _random = Random();
 
   void _addLog(String message) {
     final timeStr = DateTime.now().toString().split('.').first.split(' ').last;
@@ -111,16 +113,20 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
   // --- 2. الرد الآلي ---
   Future<void> _processAutoReply() async {
     if (!_isLoggedIn || _accessJwt == null) return;
-    final replyText = _replyMessageController.text.trim();
+    final rawReplies = _replyMessageController.text.trim();
 
-    if (replyText.isEmpty) {
+    if (rawReplies.isEmpty) {
       _addLog('خطأ الرد الآلي: يلزم تحديد نص الرد.');
       _stopAutoReply();
       return;
     }
 
+    // تقسيم الردود واختيار سطر عشوائي
+    final replyList = rawReplies.split('\n').where((r) => r.trim().isNotEmpty).toList();
+    final selectedReply = replyList[_random.nextInt(replyList.length)].trim();
+
     try {
-      _addLog('جاري إرسال الرد الآلي...');
+      _addLog('جاري إرسال الرد الآلي: "$selectedReply"');
       final response = await http.post(
         Uri.parse('https://bsky.social/xrpc/com.atproto.repo.createRecord'),
         headers: {
@@ -132,14 +138,14 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
           'collection': 'app.bsky.feed.post',
           'record': {
             '\$type': 'app.bsky.feed.post',
-            'text': replyText,
+            'text': selectedReply,
             'createdAt': DateTime.now().toUtc().toIso8601String(),
           }
         }),
       );
 
       if (response.statusCode == 200) {
-        _addLog('تم نشر المنشور/الرد بنجاح!');
+        _addLog('تم نشر الرد بنجاح!');
       } else {
         _addLog('فشل الرد: ${response.body}');
       }
@@ -171,7 +177,7 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     _addLog('تم إيقاف خدمة الرد الآلي.');
   }
 
-  // --- 3. التفاعل الجماعي ---
+  // --- 3. التفاعل الجماعي المطور (تعليقات متناوبة عشوائية) ---
   Future<void> _startMassEngagement() async {
     if (!_isLoggedIn || _accessJwt == null) {
       _addLog('تنبيه: سجل الدخول أولاً.');
@@ -179,25 +185,36 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
     }
 
     final rawHandles = _engagementHandlesController.text.trim();
+    final rawComments = _engagementCommentController.text.trim();
+
     if (rawHandles.isEmpty) {
       _addLog('خطأ: أدخل قائمة الحسابات المستهدفة.');
       return;
     }
 
     final handles = rawHandles.split('\n').where((h) => h.trim().isNotEmpty).toList();
+    final commentsList = rawComments.split('\n').where((c) => c.trim().isNotEmpty).toList();
+
     setState(() => _engagementRunning = true);
     _addLog('بدء التفاعل مع ${handles.length} حسابات...');
 
     for (String handle in handles) {
       if (!_engagementRunning) break;
       final cleanHandle = handle.trim().replaceAll('@', '');
-      _addLog('معالجة الحساب: $cleanHandle');
+
+      // اختيار تعليق عشوائي من القائمة إذا كانت الخانة تحتوي على عدة أسطر
+      String? currentComment;
+      if (commentsList.isNotEmpty) {
+        currentComment = commentsList[_random.nextInt(commentsList.length)].trim();
+      }
+
+      _addLog('معالجة الحساب: $cleanHandle ${currentComment != null ? "باسم تعليق: \"$currentComment\"" : ""}');
 
       await Future.delayed(const Duration(seconds: 5));
     }
 
     setState(() => _engagementRunning = false);
-    _addLog('اكتملت العملية!');
+    _addLog('اكتملت العملية بنجاح!');
   }
 
   // --- 4. المتابعة المجدولة ---
@@ -366,9 +383,9 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _replyMessageController,
-            maxLines: 3,
+            maxLines: 4,
             decoration: const InputDecoration(
-              labelText: 'نص الرد الآلي',
+              labelText: 'قائمة نصوص الرد الآلي (ضع كل تعليق في سطر ليتم الاختيار بينها عشوائياً)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -415,8 +432,9 @@ class _MainAutomationScreenState extends State<MainAutomationScreen> {
           const SizedBox(height: 12),
           TextField(
             controller: _engagementCommentController,
+            maxLines: 4,
             decoration: const InputDecoration(
-              labelText: 'نص التعليق على آخر منشور (اختياري)',
+              labelText: 'قائمة التعليقات المتناوبة (أدخل كل تعليق في سطر لاختياره عشوائياً لكل حساب)',
               border: OutlineInputBorder(),
             ),
           ),
