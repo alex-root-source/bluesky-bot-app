@@ -9,14 +9,21 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  bluesky: ^1.1.0
-  atproto_core: ^1.0.0
+  http: ^1.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: false
+  image_path: "assets/logo.png"
+  min_sdk_android: 21
 
 flutter:
   uses-material-design: true
-  
+  assets:
+    - assets/logo.png
+    
