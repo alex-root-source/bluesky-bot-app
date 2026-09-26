@@ -24,11 +24,11 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Clean Rebuild Structure
-        run: |
-          rm -rf android ios pubspec.yaml
-          flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
-          flutter pub add http
+      - name: Enable Android Platform
+        run: flutter create --platforms=android .
+
+      - name: Install Dependencies
+        run: flutter pub get
 
       - name: Build Debug APK
         run: flutter build apk --debug
@@ -38,4 +38,3 @@ jobs:
         with:
           name: bluesky-bot-app
           path: build/app/outputs/flutter-apk/app-debug.apk
-          
