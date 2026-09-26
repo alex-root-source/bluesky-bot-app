@@ -51,7 +51,6 @@ class EngagementService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var engagementJob: Job? = null
 
-    // عدّاد "تعليق غير ظاهر" متتالي لكل حساب على حدة
     private val hiddenStreakByAccount = mutableMapOf<String, Int>()
 
     @Volatile
@@ -111,8 +110,21 @@ class EngagementService : Service() {
         hiddenStreakByAccount.clear()
         engagementJob?.cancel()
         engagementJob = serviceScope.launch {
-            // توزيع متوازن وعشوائي: كل حساب ياخذ نفس الحصة تقريباً، لكن الترتيب يكون عشوائي
-            val accountAssignment = MutableList(targetHandles.size) { it % accounts.size }.shuffled()
+            val activeAccounts = accounts.toMutableList()
+            var accountBag = mutableListOf<AccountSession>()
+
+            fun pickNextAccount(): AccountSession? {
+                if (activeAccounts.isEmpty()) return null
+                if (accountBag.isEmpty()) {
+                    accountBag = activeAccounts.shuffled().toMutableList()
+                }
+                return accountBag.removeAt(0)
+            }
+
+            fun excludeAccount(handle: String) {
+                activeAccounts.removeAll { it.handle == handle }
+                accountBag.removeAll { it.handle == handle }
+            }
 
             broadcastLog(
                 "بدء التفاعل مع ${targetHandles.size} حساب فريد عبر ${accounts.size} حساب بوت " +
@@ -126,7 +138,12 @@ class EngagementService : Service() {
                     break
                 }
 
-                val account = accounts[accountAssignment[index]]
+                val account = pickNextAccount()
+                if (account == null) {
+                    broadcastLog("🛑 تم إيقاف العملية بالكامل: جميع الحسابات استُبعدت بسبب التقييد.")
+                    break
+                }
+
                 val comment = comments[index % comments.size]
                 val cleanTarget = targetHandle.replace("@", "")
 
@@ -196,7 +213,10 @@ class EngagementService : Service() {
                                     )
                                     val newPostUri = JSONObject(commentBodyStr).optString("uri")
                                     if (newPostUri.isNotEmpty()) {
-                                        verifyVisibilityAndWarn(account.handle, newPostUri, cleanTarget)
+                                        val shouldExclude = verifyVisibilityAndWarn(account.handle, newPostUri, cleanTarget)
+                                        if (shouldExclude) {
+                                            excludeAccount(account.handle)
+                                        }
                                     }
                                 } else {
                                     broadcastLog("فشل التعليق من ${account.handle} على $cleanTarget")
@@ -225,30 +245,31 @@ class EngagementService : Service() {
         }
     }
 
-    /**
-     * يتحقق -عبر الـ API العام غير المصادق لبلوسكاي- إن التعليق الجديد ظاهر فعلاً
-     * لأي زائر غريب. لو تكرر عدم الظهور، يرسل تنبيهاً واضحاً باللوج.
-     */
-    private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String) {
-        delay(4000) // إعطاء وقت لفهرسة المنشور قبل التحقق
+    private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String): Boolean {
+        delay(4000)
         val visible = isPostPubliclyVisible(postUri)
 
         if (visible) {
             hiddenStreakByAccount[accountHandle] = 0
-            return
+            return false
         }
 
         val streak = (hiddenStreakByAccount[accountHandle] ?: 0) + 1
         hiddenStreakByAccount[accountHandle] = streak
 
-        broadcastLog("⚠️ تنبيه: تعليق $accountHandle على $targetHandle قد لا يكون ظاهراً للعامة.")
+        broadcastLog(
+            "⚠️ تنبيه: تعليق $accountHandle على $targetHandle قد لا يكون ظاهراً للعامة. " +
+                "($streak من $VISIBILITY_HIDDEN_STREAK_ALERT)"
+        )
 
         if (streak >= VISIBILITY_HIDDEN_STREAK_ALERT) {
             broadcastLog(
-                "🚨🚨 تنبيه هام: آخر $streak تعليقات من حساب $accountHandle لم تظهر للعامة. " +
-                    "يُحتمل أن الحساب أصبح مقيّداً (Shadow-limited) من بلوسكاي. يُنصح بإيقاف استخدامه مؤقتاً."
+                "🚨 تم استبعاد حساب $accountHandle من العملية الحالية: آخر $streak تعليقات لم تظهر " +
+                    "للعامة (يُحتمل أن الحساب مقيّد من بلوسكاي). سيتم توزيع الأهداف المتبقية على بقية الحسابات."
             )
+            return true
         }
+        return false
     }
 
     private fun isPostPubliclyVisible(postUri: String): Boolean {
