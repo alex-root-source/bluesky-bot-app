@@ -24,27 +24,21 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Generate Android Platform Structure
-        run: flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
+      - name: Clean Build Environment
+        run: |
+          rm -rf android ios pubspec.yaml
+          flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
 
-      - name: Add HTTP Dependency
+      - name: Add HTTP Package
         run: flutter pub add http
 
-      - name: Inject Custom Logo to Android Launcher Icons
-        run: |
-          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png || true
-          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png || true
-          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png || true
+      - name: Restore App Code
+        run: git checkout HEAD -- lib/main.dart
 
-      - name: Get Dependencies
-        run: flutter pub get
+      - name: Build Debug APK
+        run: flutter build apk --debug
 
-      - name: Build APK
-        run: flutter build apk --debug --no-tree-shake-icons
-
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: bluesky-bot-app-release
