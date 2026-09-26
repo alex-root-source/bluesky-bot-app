@@ -24,14 +24,11 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Clean Rebuild Structure
+      - name: Setup Project Structure
         run: |
           rm -rf android ios pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
           flutter pub add http
-
-      - name: Get Dependencies
-        run: flutter pub get
 
       - name: Build Debug APK
         run: flutter build apk --debug
