@@ -24,22 +24,27 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Initialize Clean Flutter App
+      - name: Rebuild Project Structure
         run: |
-          rm -rf android ios lib test pubspec.yaml
+          rm -rf android ios pubspec.yaml
           flutter create . --project-name bluesky_bot_app --platforms=android --org=com.bluesky.bot
-
-      - name: Restore Custom main.dart
-        run: git checkout HEAD -- lib/main.dart
 
       - name: Add HTTP Dependency
         run: flutter pub add http
 
-      - name: Get Dependencies
-        run: flutter pub get
+      - name: Restore Custom Code
+        run: git checkout HEAD -- lib/main.dart
+
+      - name: Replace App Icons Direct
+        run: |
+          cp assets/logo.png android/app/src/main/res/mipmap-hdpi/ic_launcher.png 2>/dev/null || true
+          cp assets/logo.png android/app/src/main/res/mipmap-mdpi/ic_launcher.png 2>/dev/null || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xhdpi/ic_launcher.png 2>/dev/null || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png 2>/dev/null || true
+          cp assets/logo.png android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png 2>/dev/null || true
 
       - name: Build APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --no-tree-shake-icons
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
