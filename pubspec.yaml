@@ -1,5 +1,5 @@
 name: bluesky_bot_app
-description: Bluesky Automation Bot App
+description: "Bluesky Bot Hub Application"
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -9,7 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  http: ^1.1.0
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
@@ -17,6 +17,4 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/logo.png
-    
+  
