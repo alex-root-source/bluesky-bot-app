@@ -118,7 +118,6 @@ class EngagementService : Service() {
             var successCount = 0
             var failedCount = 0
 
-            // استبعاد أي هدف تم التعليق عليه فعلاً في جلسة سابقة (سجل دائم على الجهاز)
             val alreadyCommented = BotPrefs.getCommentedTargets(this@EngagementService)
             val filteredTargets = targetHandles.filter { it !in alreadyCommented }
             val skippedDuplicateCount = targetHandles.size - filteredTargets.size
@@ -212,6 +211,15 @@ class EngagementService : Service() {
                             continue@targetLoop
                         }
 
+                        if (isAccountUnavailable(feedRes.code)) {
+                            broadcastLog(
+                                "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${feedRes.code}) " +
+                                    "- يتم استبعاده فوراً من العملية."
+                            )
+                            excludeAccount(account.handle)
+                            continue@targetLoop
+                        }
+
                         if (feedRes.isSuccessful) {
                             val feedArray = JSONObject(feedBodyStr).getJSONArray("feed")
                             if (feedArray.length() > 0) {
@@ -257,6 +265,15 @@ class EngagementService : Service() {
                                             "إيقاف مؤقت ${RATE_LIMIT_BACKOFF_MS / 1000} ثانية..."
                                     )
                                     delay(RATE_LIMIT_BACKOFF_MS)
+                                    continue@targetLoop
+                                }
+
+                                if (isAccountUnavailable(commentRes.code)) {
+                                    broadcastLog(
+                                        "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${commentRes.code}) " +
+                                            "- يتم استبعاده فوراً من العملية."
+                                    )
+                                    excludeAccount(account.handle)
                                     continue@targetLoop
                                 }
 
@@ -316,12 +333,8 @@ class EngagementService : Service() {
         }
     }
 
-    /**
-     * يتحقق -عبر الـ API العام غير المصادق لبلوسكاي- إن التعليق الجديد ظاهر فعلاً
-     * لأي زائر غريب. يرجع true لو وصل الحساب لعتبة الاستبعاد.
-     */
     private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String): Boolean {
-        delay(4000) // إعطاء وقت لفهرسة المنشور قبل التحقق
+        delay(4000)
         val visible = isPostPubliclyVisible(postUri)
 
         if (visible) {
@@ -345,6 +358,10 @@ class EngagementService : Service() {
             return true
         }
         return false
+    }
+
+    private fun isAccountUnavailable(code: Int): Boolean {
+        return code == 400 || code == 401 || code == 403
     }
 
     private fun isPostPubliclyVisible(postUri: String): Boolean {
