@@ -456,4 +456,29 @@ class EngagementService : Service() {
             ).apply {
                 description = "إشعار مستمر أثناء تشغيل عملية التفاعل بالخلفية"
             }
-            val 
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun buildNotification(text: String, progress: Int, max: Int): Notification {
+        val stopIntent = Intent(this, EngagementService::class.java).apply { action = ACTION_STOP }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 0, stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Bluesky Bot Hub يعمل بالخلفية")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_popup_sync)
+            .setOngoing(true)
+            .setProgress(max, progress, false)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "إيقاف", stopPendingIntent)
+            .build()
+    }
+
+    private fun updateNotification(text: String, progress: Int, max: Int) {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(NOTIFICATION_ID, buildNotification(text, progress, max))
+    }
