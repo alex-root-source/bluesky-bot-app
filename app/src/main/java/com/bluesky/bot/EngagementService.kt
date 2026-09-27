@@ -482,3 +482,4 @@ class EngagementService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text, progress, max))
     }
+}
