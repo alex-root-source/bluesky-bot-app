@@ -27,6 +27,13 @@ class EngagementService : Service() {
 
     private data class AccountSession(val handle: String, val did: String, val jwt: String)
 
+    private data class PendingVisibilityCheck(
+        val accountHandle: String,
+        val postUri: String,
+        val targetHandle: String,
+        val dueAtMillis: Long
+    )
+
     companion object {
         const val ACTION_START = "com.bluesky.bot.action.START"
         const val ACTION_STOP = "com.bluesky.bot.action.STOP"
@@ -47,6 +54,7 @@ class EngagementService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val VISIBILITY_HIDDEN_STREAK_ALERT = 3
         private const val RATE_LIMIT_BACKOFF_MS = 90_000L
+        private const val PENDING_CHECK_DELAY_MS = 45_000L
     }
 
     private val client = OkHttpClient()
@@ -135,6 +143,8 @@ class EngagementService : Service() {
 
             val activeAccounts = accounts.toMutableList()
             var accountBag = mutableListOf<AccountSession>()
+            val pendingChecks = mutableListOf<PendingVisibilityCheck>()
+            var stoppedManually = false
 
             fun pickNextAccount(): AccountSession? {
                 if (activeAccounts.isEmpty()) return null
@@ -149,6 +159,19 @@ class EngagementService : Service() {
                 accountBag.removeAll { it.handle == handle }
             }
 
+            suspend fun drainDueChecks() {
+                val now = System.currentTimeMillis()
+                val due = pendingChecks.filter { it.dueAtMillis <= now }
+                if (due.isEmpty()) return
+                pendingChecks.removeAll(due)
+                for (item in due) {
+                    val shouldExclude = verifyVisibilityAndWarn(item.accountHandle, item.postUri, item.targetHandle)
+                    if (shouldExclude) {
+                        excludeAccount(item.accountHandle)
+                    }
+                }
+            }
+
             broadcastLog(
                 "بدء التفاعل مع ${filteredTargets.size} حساب فريد عبر ${accounts.size} حساب بوت " +
                     "(${accounts.joinToString(", ") { it.handle }})، باستخدام ${comments.size} " +
@@ -156,8 +179,11 @@ class EngagementService : Service() {
             )
 
             targetLoop@ for ((index, targetHandle) in filteredTargets.withIndex()) {
+                drainDueChecks()
+
                 if (!isRunning) {
                     broadcastLog("تم إيقاف التفاعل بواسطة المستخدم.")
+                    stoppedManually = true
                     break@targetLoop
                 }
 
@@ -286,10 +312,14 @@ class EngagementService : Service() {
 
                                     val newPostUri = JSONObject(commentBodyStr).optString("uri")
                                     if (newPostUri.isNotEmpty()) {
-                                        val shouldExclude = verifyVisibilityAndWarn(account.handle, newPostUri, cleanTarget)
-                                        if (shouldExclude) {
-                                            excludeAccount(account.handle)
-                                        }
+                                        pendingChecks.add(
+                                            PendingVisibilityCheck(
+                                                accountHandle = account.handle,
+                                                postUri = newPostUri,
+                                                targetHandle = cleanTarget,
+                                                dueAtMillis = System.currentTimeMillis() + PENDING_CHECK_DELAY_MS
+                                            )
+                                        )
                                     }
                                 } else {
                                     failedCount++
@@ -318,6 +348,16 @@ class EngagementService : Service() {
 
             isRunning = false
 
+            if (pendingChecks.isNotEmpty() && !stoppedManually) {
+                broadcastLog("🔍 جاري التحقق من ظهور آخر ${pendingChecks.size} تعليق قبل إنهاء الجلسة...")
+                while (pendingChecks.isNotEmpty()) {
+                    val now = System.currentTimeMillis()
+                    val nextDue = pendingChecks.minOf { it.dueAtMillis }
+                    if (nextDue > now) delay(nextDue - now)
+                    drainDueChecks()
+                }
+            }
+
             val elapsedMs = System.currentTimeMillis() - startTimeMillis
             val elapsedMinutes = elapsedMs / 60000
             val elapsedSecondsRemainder = (elapsedMs / 1000) % 60
@@ -334,7 +374,6 @@ class EngagementService : Service() {
     }
 
     private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String): Boolean {
-        delay(4000)
         val visible = isPostPubliclyVisible(postUri)
 
         if (visible) {
@@ -417,30 +456,4 @@ class EngagementService : Service() {
             ).apply {
                 description = "إشعار مستمر أثناء تشغيل عملية التفاعل بالخلفية"
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
-        }
-    }
-
-    private fun buildNotification(text: String, progress: Int, max: Int): Notification {
-        val stopIntent = Intent(this, EngagementService::class.java).apply { action = ACTION_STOP }
-        val stopPendingIntent = PendingIntent.getService(
-            this, 0, stopIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Bluesky Bot Hub يعمل بالخلفية")
-            .setContentText(text)
-            .setSmallIcon(android.R.drawable.ic_popup_sync)
-            .setOngoing(true)
-            .setProgress(max, progress, false)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "إيقاف", stopPendingIntent)
-            .build()
-    }
-
-    private fun updateNotification(text: String, progress: Int, max: Int) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(text, progress, max))
-    }
-}
+            val 
