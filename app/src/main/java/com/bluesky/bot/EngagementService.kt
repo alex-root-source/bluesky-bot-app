@@ -414,7 +414,8 @@ class EngagementService : Service() {
 
             val bodyStr = res.body?.string() ?: return false
             val thread = JSONObject(bodyStr).optJSONObject("thread") ?: return false
-            thread.optString("\$type") == "app.bsky.feed.defs#threadViewPost" catch (e: Exception) {
+            thread.optString("\$type") == "app.bsky.feed.defs#threadViewPost"
+        } catch (e: Exception) {
             false
         }
     }
