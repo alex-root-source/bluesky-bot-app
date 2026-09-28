@@ -149,6 +149,7 @@ class MainActivity : AppCompatActivity() {
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, accountJwts)
                 putStringArrayListExtra(EngagementService.EXTRA_TARGET_HANDLES, ArrayList(handles))
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
+                putStringArrayListExtra(EngagementService.EXTRA_EXCLUDED_HANDLES, ArrayList(excludedSet))
                 putExtra(EngagementService.EXTRA_DELAY_MIN_SECONDS, delayMin)
                 putExtra(EngagementService.EXTRA_DELAY_MAX_SECONDS, delayMax)
             }
