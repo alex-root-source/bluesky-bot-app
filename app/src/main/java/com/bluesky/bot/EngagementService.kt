@@ -63,10 +63,15 @@ class EngagementService : Service() {
 
         const val BROADCAST_LOG = "com.bluesky.bot.broadcast.LOG"
         const val BROADCAST_FINISHED = "com.bluesky.bot.broadcast.FINISHED"
+        const val BROADCAST_ACCOUNT_EXCLUDED = "com.bluesky.bot.broadcast.ACCOUNT_EXCLUDED"
         const val EXTRA_LOG_MESSAGE = "extra_log_message"
+        const val EXTRA_EXCLUDED_ACCOUNT_HANDLE = "extra_excluded_account_handle"
+        const val EXTRA_EXCLUDED_ACCOUNT_REASON = "extra_excluded_account_reason"
 
         private const val CHANNEL_ID = "engagement_channel"
+        private const val ALERT_CHANNEL_ID = "engagement_alerts_channel"
         private const val NOTIFICATION_ID = 1001
+        private const val ALERT_NOTIFICATION_ID_BASE = 2000
         private const val VISIBILITY_HIDDEN_STREAK_ALERT = 3
         private const val RATE_LIMIT_BACKOFF_MS = 90_000L
         private const val PENDING_CHECK_DELAY_MS = 45_000L
@@ -80,6 +85,7 @@ class EngagementService : Service() {
     private var engagementJob: Job? = null
 
     private val hiddenStreakByAccount = mutableMapOf<String, Int>()
+    private var alertNotificationCounter = 0
 
     @Volatile
     private var isRunning = false
@@ -192,9 +198,10 @@ class EngagementService : Service() {
                 return accountBag.removeAt(0)
             }
 
-            fun excludeAccount(handle: String) {
+            fun excludeAccount(handle: String, reason: String) {
                 activeAccounts.removeAll { it.handle == handle }
                 accountBag.removeAll { it.handle == handle }
+                notifyAccountExcluded(handle, reason)
             }
 
             suspend fun drainDueChecks() {
@@ -205,7 +212,10 @@ class EngagementService : Service() {
                 for (item in due) {
                     val shouldExclude = verifyVisibilityAndWarn(item.accountHandle, item.postUri, item.targetHandle)
                     if (shouldExclude) {
-                        excludeAccount(item.accountHandle)
+                        excludeAccount(
+                            item.accountHandle,
+                            "آخر $VISIBILITY_HIDDEN_STREAK_ALERT تعليقات لم تظهر للعامة (يُحتمل shadowban من بلوسكاي)"
+                        )
                     }
                 }
             }
@@ -275,11 +285,9 @@ class EngagementService : Service() {
                             }
 
                             is PostLookup.Unavailable -> {
-                                broadcastLog(
-                                    "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${lookup.code}) " +
-                                        "- يتم استبعاده فوراً من العملية."
-                                )
-                                excludeAccount(account.handle)
+                                val reason = "الحساب أصبح غير صالح أثناء جلب المنشورات (معلّق أو الجلسة منتهية، رمز ${lookup.code})"
+                                broadcastLog("🚫 الحساب ${account.handle} $reason - يتم استبعاده فوراً من العملية.")
+                                excludeAccount(account.handle, reason)
                                 continue@targetLoop
                             }
 
@@ -349,11 +357,9 @@ class EngagementService : Service() {
                                 }
 
                                 if (isAccountUnavailable(commentRes.code)) {
-                                    broadcastLog(
-                                        "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${commentRes.code}) " +
-                                            "- يتم استبعاده فوراً من العملية."
-                                    )
-                                    excludeAccount(account.handle)
+                                    val reason = "الحساب أصبح غير صالح أثناء التعليق (معلّق أو الجلسة منتهية، رمز ${commentRes.code})"
+                                    broadcastLog("🚫 الحساب ${account.handle} $reason - يتم استبعاده فوراً من العملية.")
+                                    excludeAccount(account.handle, reason)
                                     continue@targetLoop
                                 }
 
@@ -577,6 +583,34 @@ class EngagementService : Service() {
         }
     }
 
+    /**
+     * إشعار خاص ومنفصل (يظهر كتنبيه منبثق مستقل عن إشعار التقدّم) + broadcast،
+     * يُطلق فوراً عند استبعاد أي حساب بوت من العملية الحالية لأي سبب.
+     */
+    private fun notifyAccountExcluded(handle: String, reason: String) {
+        val intent = Intent(BROADCAST_ACCOUNT_EXCLUDED).apply {
+            setPackage(packageName)
+            putExtra(EXTRA_EXCLUDED_ACCOUNT_HANDLE, handle)
+            putExtra(EXTRA_EXCLUDED_ACCOUNT_REASON, reason)
+        }
+        sendBroadcast(intent)
+
+        val manager = getSystemService(NotificationManager::class.java)
+        val notificationId = ALERT_NOTIFICATION_ID_BASE + (alertNotificationCounter++)
+
+        val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+            .setContentTitle("🚫 تم استبعاد حساب: $handle")
+            .setContentText(reason)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .build()
+
+        manager.notify(notificationId, notification)
+    }
+
     private fun stopSelfSafely() {
         engagementJob?.cancel()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -606,15 +640,26 @@ class EngagementService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
+            val manager = getSystemService(NotificationManager::class.java)
+
+            val progressChannel = NotificationChannel(
                 CHANNEL_ID,
                 "تفاعل Bluesky Bot",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = "إشعار مستمر أثناء تشغيل عملية التفاعل بالخلفية"
             }
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            manager.createNotificationChannel(progressChannel)
+
+            val alertChannel = NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "تنبيهات استبعاد الحسابات",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "إشعار فوري عند استبعاد حساب بوت من العملية"
+                enableVibration(true)
+            }
+            manager.createNotificationChannel(alertChannel)
         }
     }
 
@@ -639,4 +684,3 @@ class EngagementService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.notify(NOTIFICATION_ID, buildNotification(text, progress, max))
     }
-}
