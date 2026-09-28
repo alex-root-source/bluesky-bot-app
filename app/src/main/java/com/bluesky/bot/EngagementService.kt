@@ -34,6 +34,20 @@ class EngagementService : Service() {
         val dueAtMillis: Long
     )
 
+    private sealed class PostLookup {
+        data class Found(
+            val uri: String,
+            val cid: String,
+            val rootUri: String,
+            val rootCid: String,
+            val isReply: Boolean
+        ) : PostLookup()
+        object NoOriginalPost : PostLookup()
+        object RateLimited : PostLookup()
+        data class Unavailable(val code: Int) : PostLookup()
+        data class OtherError(val code: Int) : PostLookup()
+    }
+
     companion object {
         const val ACTION_START = "com.bluesky.bot.action.START"
         const val ACTION_STOP = "com.bluesky.bot.action.STOP"
@@ -43,6 +57,7 @@ class EngagementService : Service() {
         const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
         const val EXTRA_TARGET_HANDLES = "extra_target_handles"
         const val EXTRA_COMMENTS = "extra_comments"
+        const val EXTRA_EXCLUDED_HANDLES = "extra_excluded_handles"
         const val EXTRA_DELAY_MIN_SECONDS = "extra_delay_min_seconds"
         const val EXTRA_DELAY_MAX_SECONDS = "extra_delay_max_seconds"
 
@@ -55,6 +70,9 @@ class EngagementService : Service() {
         private const val VISIBILITY_HIDDEN_STREAK_ALERT = 3
         private const val RATE_LIMIT_BACKOFF_MS = 90_000L
         private const val PENDING_CHECK_DELAY_MS = 45_000L
+        private const val FEED_PAGE_SIZE = 50
+        private const val MAX_FEED_PAGES = 3
+        private const val MAX_POST_AGE_HOURS = 24L
     }
 
     private val client = OkHttpClient()
@@ -87,6 +105,7 @@ class EngagementService : Service() {
                 val accountJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
                 val targetHandles = intent.getStringArrayListExtra(EXTRA_TARGET_HANDLES) ?: arrayListOf()
                 val comments = intent.getStringArrayListExtra(EXTRA_COMMENTS) ?: arrayListOf()
+                val excludedHandles = intent.getStringArrayListExtra(EXTRA_EXCLUDED_HANDLES) ?: arrayListOf()
                 val delayMin = intent.getIntExtra(EXTRA_DELAY_MIN_SECONDS, 8).coerceAtLeast(1)
                 val delayMax = intent.getIntExtra(EXTRA_DELAY_MAX_SECONDS, 15).coerceAtLeast(delayMin)
 
@@ -105,7 +124,7 @@ class EngagementService : Service() {
                 }
 
                 startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, targetHandles.size))
-                startEngagement(accounts, targetHandles, comments, delayMin, delayMax)
+                startEngagement(accounts, targetHandles, comments, delayMin, delayMax, excludedHandles)
             }
         }
         return START_NOT_STICKY
@@ -116,7 +135,8 @@ class EngagementService : Service() {
         targetHandles: List<String>,
         comments: List<String>,
         delayMin: Int,
-        delayMax: Int
+        delayMax: Int,
+        excludedHandles: List<String>
     ) {
         isRunning = true
         hiddenStreakByAccount.clear()
@@ -125,6 +145,24 @@ class EngagementService : Service() {
             val startTimeMillis = System.currentTimeMillis()
             var successCount = 0
             var failedCount = 0
+            var skippedNoPostCount = 0
+
+            val excludedDids = excludedHandles.mapNotNull { h ->
+                try {
+                    val r = client.newCall(
+                        Request.Builder()
+                            .url("https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=$h")
+                            .build()
+                    ).execute()
+                    val body = r.body?.string() ?: ""
+                    if (r.isSuccessful) JSONObject(body).getString("did") else null
+                } catch (e: Exception) {
+                    null
+                }
+            }.toSet()
+            if (excludedHandles.isNotEmpty()) {
+                broadcastLog("🛡️ تم تحميل ${excludedDids.size} من ${excludedHandles.size} حساب مستثنى (لن يُعلَّق على منشوراتهم حتى لو أُعيد نشرها).")
+            }
 
             val alreadyCommented = BotPrefs.getCommentedTargets(this@EngagementService)
             val filteredTargets = targetHandles.filter { it !in alreadyCommented }
@@ -221,45 +259,61 @@ class EngagementService : Service() {
                     if (resolveRes.isSuccessful) {
                         val targetDid = JSONObject(resolveBodyStr).getString("did")
 
-                        val feedReq = Request.Builder()
-                            .url("https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed?actor=$targetDid&limit=1")
-                            .addHeader("Authorization", "Bearer ${account.jwt}")
-                            .build()
-                        val feedRes = client.newCall(feedReq).execute()
-                        val feedBodyStr = feedRes.body?.string() ?: ""
-
-                        if (feedRes.code == 429) {
-                            broadcastLog(
-                                "⏳ تم تجاوز الحد المسموح (429) أثناء جلب منشورات $cleanTarget - " +
-                                    "إيقاف مؤقت ${RATE_LIMIT_BACKOFF_MS / 1000} ثانية..."
-                            )
-                            delay(RATE_LIMIT_BACKOFF_MS)
+                        if (targetDid in excludedDids) {
+                            broadcastLog("⏭️ تم تخطي $cleanTarget (ضمن قائمة الاستثناء).")
                             continue@targetLoop
                         }
 
-                        if (isAccountUnavailable(feedRes.code)) {
-                            broadcastLog(
-                                "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${feedRes.code}) " +
-                                    "- يتم استبعاده فوراً من العملية."
-                            )
-                            excludeAccount(account.handle)
-                            continue@targetLoop
-                        }
+                        when (val lookup = findTargetPost(account, targetDid, excludedDids)) {
+                            is PostLookup.RateLimited -> {
+                                broadcastLog(
+                                    "⏳ تم تجاوز الحد المسموح (429) أثناء جلب منشورات $cleanTarget - " +
+                                        "إيقاف مؤقت ${RATE_LIMIT_BACKOFF_MS / 1000} ثانية..."
+                                )
+                                delay(RATE_LIMIT_BACKOFF_MS)
+                                continue@targetLoop
+                            }
 
-                        if (feedRes.isSuccessful) {
-                            val feedArray = JSONObject(feedBodyStr).getJSONArray("feed")
-                            if (feedArray.length() > 0) {
-                                val post = feedArray.getJSONObject(0).getJSONObject("post")
-                                val postUri = post.getString("uri")
-                                val postCid = post.getString("cid")
+                            is PostLookup.Unavailable -> {
+                                broadcastLog(
+                                    "🚫 الحساب ${account.handle} أصبح غير صالح (معلّق أو الجلسة منتهية، رمز ${lookup.code}) " +
+                                        "- يتم استبعاده فوراً من العملية."
+                                )
+                                excludeAccount(account.handle)
+                                continue@targetLoop
+                            }
+
+                            is PostLookup.OtherError -> {
+                                failedCount++
+                                broadcastLog("فشل جلب منشورات $cleanTarget (رمز ${lookup.code})")
+                            }
+
+                            is PostLookup.NoOriginalPost -> {
+                                skippedNoPostCount++
+                                broadcastLog(
+                                    "⏭️ تم تخطي $cleanTarget: لا يوجد له منشور أو رد مناسب " +
+                                        "(فقط إعادات نشر أو محتوى مرتبط بحسابات مستثناة)."
+                                )
+                                continue@targetLoop
+                            }
+
+                            is PostLookup.Found -> {
+                                val postUri = lookup.uri
+                                val postCid = lookup.cid
+                                if (lookup.isReply) {
+                                    broadcastLog(
+                                        "↩️ آخر منشور أصلي لـ $cleanTarget أقدم من $MAX_POST_AGE_HOURS ساعة " +
+                                            "(أو غير موجود)، سيتم التعليق على آخر رد له."
+                                    )
+                                }
 
                                 val replyRecord = JSONObject().apply {
                                     put("text", comment)
                                     put("createdAt", java.time.Instant.now().toString())
                                     put("reply", JSONObject().apply {
                                         put("root", JSONObject().apply {
-                                            put("uri", postUri)
-                                            put("cid", postCid)
+                                            put("uri", lookup.rootUri)
+                                            put("cid", lookup.rootCid)
                                         })
                                         put("parent", JSONObject().apply {
                                             put("uri", postUri)
@@ -325,9 +379,6 @@ class EngagementService : Service() {
                                     failedCount++
                                     broadcastLog("فشل التعليق من ${account.handle} على $cleanTarget")
                                 }
-                            } else {
-                                failedCount++
-                                broadcastLog("لا توجد منشورات للحساب $cleanTarget")
                             }
                         }
                     } else {
@@ -364,13 +415,119 @@ class EngagementService : Service() {
             val excludedAccountsCount = accounts.size - activeAccounts.size
 
             broadcastLog(
-                "📊 ملخص الجلسة: نجح $successCount | فشل $failedCount | تم تخطيه (سابقاً) $skippedDuplicateCount | " +
+                "📊 ملخص الجلسة: نجح $successCount | فشل $failedCount | تم تخطيه (سابقاً) $skippedDuplicateCount | بدون منشور أصلي $skippedNoPostCount | " +
                     "حسابات مستبعدة $excludedAccountsCount | الوقت الإجمالي ${elapsedMinutes} د ${elapsedSecondsRemainder} ث"
             )
             broadcastLog("اكتملت العملية بالكامل!")
             broadcastFinished()
             stopSelfSafely()
         }
+    }
+
+    /**
+     * يختار المنشور المناسب للتعليق عليه:
+     * 1) آخر منشور أصلي كتبه صاحب الحساب، إذا كان عمره أقل من MAX_POST_AGE_HOURS ساعة.
+     * 2) وإلا آخر رد كتبه صاحب الحساب (إن وُجد ورد أحدث من المنشور الأصلي).
+     * 3) وإلا آخر منشور أصلي مهما كان عمره.
+     * يتخطى: إعادات النشر، ما كاتبه غير صاحب الحساب، والمحتوى المرتبط بالحسابات المستثناة
+     * (منشور مستثنى، رد على مستثنى، أو اقتباس من مستثنى).
+     */
+    private fun findTargetPost(
+        account: AccountSession,
+        targetDid: String,
+        excludedDids: Set<String>
+    ): PostLookup {
+        val maxAgeMs = MAX_POST_AGE_HOURS * 3_600_000L
+        val now = System.currentTimeMillis()
+
+        var firstReply: PostLookup.Found? = null
+        var cursor: String? = null
+
+        for (page in 0 until MAX_FEED_PAGES) {
+            val url = StringBuilder(
+                "https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed" +
+                    "?actor=$targetDid&limit=$FEED_PAGE_SIZE&filter=posts_with_replies"
+            )
+            val c = cursor
+            if (c != null) url.append("&cursor=").append(URLEncoder.encode(c, "UTF-8"))
+
+            val res = client.newCall(
+                Request.Builder()
+                    .url(url.toString())
+                    .addHeader("Authorization", "Bearer ${account.jwt}")
+                    .build()
+            ).execute()
+            val bodyStr = res.body?.string() ?: ""
+
+            if (res.code == 429) return PostLookup.RateLimited
+            if (isAccountUnavailable(res.code)) return PostLookup.Unavailable(res.code)
+            if (!res.isSuccessful) return PostLookup.OtherError(res.code)
+
+            val json = JSONObject(bodyStr)
+            val feed = json.getJSONArray("feed")
+
+            for (i in 0 until feed.length()) {
+                val item = feed.getJSONObject(i)
+
+                // تخطي إعادات النشر
+                val reasonType = item.optJSONObject("reason")?.optString("\$type")
+                if (reasonType == "app.bsky.feed.defs#reasonRepost") continue
+
+                val post = item.getJSONObject("post")
+                val authorDid = post.getJSONObject("author").getString("did")
+                if (authorDid != targetDid || authorDid in excludedDids) continue
+
+                // تخطي اقتباسات منشورات المستثنين
+                val embed = post.optJSONObject("embed")
+                val quotedDid = embed?.optJSONObject("record")
+                    ?.optJSONObject("author")?.optString("did")
+                    ?: embed?.optJSONObject("record")?.optJSONObject("record")
+                        ?.optJSONObject("author")?.optString("did")
+                if (!quotedDid.isNullOrEmpty() && quotedDid in excludedDids) continue
+
+                val uri = post.getString("uri")
+                val cid = post.getString("cid")
+                val replyRef = post.optJSONObject("record")?.optJSONObject("reply")
+
+                if (replyRef == null) {
+                    // منشور أصلي: لأن الترتيب من الأحدث للأقدم، أي رد رأيناه قبله هو أحدث منه
+                    val postAt = try {
+                        java.time.Instant.parse(post.getString("indexedAt")).toEpochMilli()
+                    } catch (e: Exception) {
+                        now
+                    }
+                    val original = PostLookup.Found(uri, cid, uri, cid, false)
+                    return if (now - postAt < maxAgeMs) original else (firstReply ?: original)
+                }
+
+                // رد: نتأكد أنه ليس ردّاً على حساب مستثنى (الأصل أو الأب)
+                val rootRef = replyRef.getJSONObject("root")
+                val parentRef = replyRef.getJSONObject("parent")
+                val rootUri = rootRef.getString("uri")
+                val parentUri = parentRef.getString("uri")
+                val touchesExcluded = excludedDids.any {
+                    rootUri.startsWith("at://$it/") || parentUri.startsWith("at://$it/")
+                }
+                if (touchesExcluded) continue
+
+                if (firstReply == null) {
+                    firstReply = PostLookup.Found(
+                        uri = uri,
+                        cid = cid,
+                        rootUri = rootUri,
+                        rootCid = rootRef.getString("cid"),
+                        isReply = true
+                    )
+                }
+            }
+
+            val next = json.optString("cursor")
+            if (next.isEmpty()) break
+            cursor = next
+        }
+
+        // لا يوجد منشور أصلي مناسب: نستخدم آخر رد إن وُجد
+        return firstReply ?: PostLookup.NoOriginalPost
     }
 
     private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String): Boolean {
