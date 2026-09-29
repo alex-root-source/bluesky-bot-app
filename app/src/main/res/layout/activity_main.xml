@@ -1,156 +1,254 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F172A"
-    android:padding="16dp">
+    android:background="@color/bg_base"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="20dp">
 
+        <!-- ===== الرأس ===== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="20dp">
 
             <TextView
                 android:id="@+id/loggedInAsText"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Bluesky Bot Hub"
-                android:textColor="#0085FF"
-                android:textSize="20sp"
+                android:text="🦋 Bluesky Bot Hub"
+                android:textColor="@color/text_primary"
+                android:textSize="19sp"
                 android:textStyle="bold" />
 
-            <TextView
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/logoutBtn"
+                style="@style/Widget.Material3.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="خروج"
-                android:textColor="#F87171"
-                android:textSize="14sp"
-                android:padding="8dp" />
+                android:textAllCaps="false"
+                android:textColor="@color/brand_error"
+                app:insetTop="0dp"
+                app:insetBottom="0dp" />
 
         </LinearLayout>
 
-        <EditText
-            android:id="@+id/handlesInput"
-            android:layout_width="match_parent"
-            android:layout_height="100dp"
-            android:hint="الحسابات المستهدفة (حساب في كل سطر)"
-            android:gravity="top"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#94A3B8" />
-
-        <EditText
-            android:id="@+id/excludeInput"
-            android:layout_width="match_parent"
-            android:layout_height="80dp"
-            android:hint="استبعاد هذه الحسابات (رابط أو هاندل، سطر لكل حساب)"
-            android:gravity="top"
-            android:text="micheeel.bsky.social"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#94A3B8"
-            android:layout_marginTop="8dp" />
-
-        <EditText
-            android:id="@+id/commentInput"
+        <!-- ===== بطاقة: الأهداف ===== -->
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.BlueskyBot.CardView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="نص التعليق"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#94A3B8"
-            android:layout_marginTop="8dp" />
+            android:layout_marginBottom="16dp">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="8dp">
-
-            <EditText
-                android:id="@+id/delayMinInput"
-                android:layout_width="0dp"
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="أقل تأخير (ثانية)"
-                android:inputType="number"
-                android:text="8"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#94A3B8" />
+                android:orientation="vertical">
 
-            <EditText
-                android:id="@+id/delayMaxInput"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="أكبر تأخير (ثانية)"
-                android:inputType="number"
-                android:text="15"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#94A3B8"
-                android:layout_marginStart="8dp" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎯 الأهداف"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
 
-        </LinearLayout>
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="الحسابات المستهدفة (حساب في كل سطر)">
 
-        <EditText
-            android:id="@+id/allowedLangsInput"
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/handlesInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="110dp"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine"
+                        android:textColor="@color/text_primary" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="استبعاد هذه الحسابات (رابط أو هاندل، سطر لكل حساب)">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/excludeInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="80dp"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine"
+                        android:text="micheeel.bsky.social"
+                        android:textColor="@color/text_primary" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ===== بطاقة: التعليق والتوقيت ===== -->
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.BlueskyBot.CardView"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="اللغات المسموحة (اختياري، مثل: ar,en) - فارغ = بدون فلترة"
-            android:textColor="#FFFFFF"
-            android:textColorHint="#94A3B8"
-            android:layout_marginTop="8dp" />
+            android:layout_marginBottom="16dp">
 
-        <TextView
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="💬 التعليق والتوقيت"
+                    android:textColor="@color/text_primary"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="12dp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="نص التعليق">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/commentInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="12dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="أقل تأخير (ث)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/delayMinInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:text="8"
+                            android:textColor="@color/text_primary" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:hint="أكبر تأخير (ث)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/delayMaxInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:text="15"
+                            android:textColor="@color/text_primary" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="اللغات المسموحة (اختياري، مثل: ar,en)">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/allowedLangsInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textColor="@color/text_primary" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- ===== رابط شاشة السجل ===== -->
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/historyBtn"
-            android:layout_width="wrap_content"
+            style="@style/Widget.BlueskyBot.Button.Outlined"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginBottom="18dp"
             android:text="📋 الحسابات المعطّلة وسجل الجلسات"
-            android:textColor="#0085FF"
-            android:textSize="13sp"
-            android:padding="8dp"
-            android:layout_marginTop="4dp" />
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
 
+        <!-- ===== أزرار التحكم ===== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="12dp">
+            android:layout_marginBottom="18dp">
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/startBtn"
+                style="@style/Widget.BlueskyBot.Button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="52dp"
                 android:layout_weight="1"
-                android:text="بدء التفاعل"
-                android:backgroundTint="#4CAF50" />
+                android:text="▶  بدء التفاعل"
+                android:backgroundTint="@color/brand_secondary"
+                android:textColor="@color/brand_on_secondary" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/stopBtn"
+                style="@style/Widget.BlueskyBot.Button.Outlined"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="52dp"
                 android:layout_weight="1"
-                android:text="إيقاف"
-                android:backgroundTint="#F44336"
-                android:layout_marginStart="8dp" />
+                android:layout_marginStart="10dp"
+                android:text="⏹  إيقاف"
+                android:textColor="@color/brand_error"
+                app:strokeColor="@color/brand_error" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/logText"
+        <!-- ===== سجل التفاعل الحي ===== -->
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.BlueskyBot.CardView"
             android:layout_width="match_parent"
-            android:layout_height="200dp"
-            android:background="#1E293B"
-            android:textColor="#00FF66"
-            android:padding="8dp"
-            android:fontFamily="monospace"
-            android:textSize="12sp"
-            android:layout_marginTop="16dp" />
+            android:layout_height="wrap_content"
+            app:cardBackgroundColor="@color/log_bg"
+            app:contentPadding="12dp">
+
+            <TextView
+                android:id="@+id/logText"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:textColor="@color/log_text"
+                android:fontFamily="monospace"
+                android:textSize="11.5sp"
+                android:scrollbars="vertical" />
+
+        </com.google.android.material.card.MaterialCardView>
 
     </LinearLayout>
 </ScrollView>
