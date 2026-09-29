@@ -20,12 +20,18 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONObject
 import java.net.URLEncoder
 
 class EngagementService : Service() {
 
-    private data class AccountSession(val handle: String, val did: String, val jwt: String)
+    private data class AccountSession(
+        val handle: String,
+        val did: String,
+        var jwt: String,
+        var refreshJwt: String
+    )
 
     private data class PendingVisibilityCheck(
         val accountHandle: String,
@@ -55,9 +61,11 @@ class EngagementService : Service() {
         const val EXTRA_ACCOUNT_HANDLES = "extra_account_handles"
         const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
         const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
+        const val EXTRA_ACCOUNT_REFRESH_JWTS = "extra_account_refresh_jwts"
         const val EXTRA_TARGET_HANDLES = "extra_target_handles"
         const val EXTRA_COMMENTS = "extra_comments"
         const val EXTRA_EXCLUDED_HANDLES = "extra_excluded_handles"
+        const val EXTRA_ALLOWED_LANGS = "extra_allowed_langs"
         const val EXTRA_DELAY_MIN_SECONDS = "extra_delay_min_seconds"
         const val EXTRA_DELAY_MAX_SECONDS = "extra_delay_max_seconds"
 
@@ -109,9 +117,12 @@ class EngagementService : Service() {
                 val accountHandles = intent.getStringArrayListExtra(EXTRA_ACCOUNT_HANDLES) ?: arrayListOf()
                 val accountDids = intent.getStringArrayListExtra(EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
                 val accountJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
+                val accountRefreshJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
                 val targetHandles = intent.getStringArrayListExtra(EXTRA_TARGET_HANDLES) ?: arrayListOf()
                 val comments = intent.getStringArrayListExtra(EXTRA_COMMENTS) ?: arrayListOf()
                 val excludedHandles = intent.getStringArrayListExtra(EXTRA_EXCLUDED_HANDLES) ?: arrayListOf()
+                val allowedLangs = (intent.getStringArrayListExtra(EXTRA_ALLOWED_LANGS) ?: arrayListOf())
+                    .map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
                 val delayMin = intent.getIntExtra(EXTRA_DELAY_MIN_SECONDS, 8).coerceAtLeast(1)
                 val delayMax = intent.getIntExtra(EXTRA_DELAY_MAX_SECONDS, 15).coerceAtLeast(delayMin)
 
@@ -126,23 +137,29 @@ class EngagementService : Service() {
                 }
 
                 val accounts = accountHandles.indices.map {
-                    AccountSession(accountHandles[it], accountDids[it], accountJwts[it])
+                    AccountSession(
+                        handle = accountHandles[it],
+                        did = accountDids[it],
+                        jwt = accountJwts[it],
+                        refreshJwt = accountRefreshJwts.getOrElse(it) { "" }
+                    )
                 }
 
                 startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, targetHandles.size))
-                startEngagement(accounts, targetHandles, comments, delayMin, delayMax, excludedHandles)
+                startEngagement(accounts, targetHandles, comments, delayMin, delayMax, excludedHandles, allowedLangs)
             }
         }
         return START_NOT_STICKY
     }
 
     private fun startEngagement(
-        accounts: List<AccountSession>,
+        accountsIn: List<AccountSession>,
         targetHandles: List<String>,
         comments: List<String>,
         delayMin: Int,
         delayMax: Int,
-        excludedHandles: List<String>
+        excludedHandles: List<String>,
+        allowedLangs: Set<String>
     ) {
         isRunning = true
         hiddenStreakByAccount.clear()
@@ -152,6 +169,20 @@ class EngagementService : Service() {
             var successCount = 0
             var failedCount = 0
             var skippedNoPostCount = 0
+
+            // استبعاد أي حساب بوت مُعطّل بشكل دائم من جلسات سابقة (طبقة حماية إضافية
+            // حتى لو استُدعيت الخدمة مباشرة بدون المرور بشاشة التطبيق الرئيسية)
+            val permanentlyDisabled = BotPrefs.getDisabledAccounts(this@EngagementService)
+            val accounts = accountsIn.filterNot { it.handle in permanentlyDisabled }
+            if (accounts.size < accountsIn.size) {
+                broadcastLog("⏭️ تم تجاهل ${accountsIn.size - accounts.size} حساب بوت معطّل بشكل دائم.")
+            }
+            if (accounts.isEmpty()) {
+                broadcastLog("🛑 لا يوجد أي حساب بوت نشط (الكل معطّل). أعد تفعيل حساب من شاشة السجل أولاً.")
+                broadcastFinished()
+                stopSelfSafely()
+                return@launch
+            }
 
             val excludedDids = excludedHandles.mapNotNull { h ->
                 try {
@@ -168,6 +199,9 @@ class EngagementService : Service() {
             }.toSet()
             if (excludedHandles.isNotEmpty()) {
                 broadcastLog("🛡️ تم تحميل ${excludedDids.size} من ${excludedHandles.size} حساب مستثنى (لن يُعلَّق على منشوراتهم حتى لو أُعيد نشرها).")
+            }
+            if (allowedLangs.isNotEmpty()) {
+                broadcastLog("🌐 فلترة اللغة مفعّلة: سيُفضَّل التعليق فقط على منشورات بلغة (${allowedLangs.joinToString(", ")}).")
             }
 
             val alreadyCommented = BotPrefs.getCommentedTargets(this@EngagementService)
@@ -274,7 +308,7 @@ class EngagementService : Service() {
                             continue@targetLoop
                         }
 
-                        when (val lookup = findTargetPost(account, targetDid, excludedDids)) {
+                        when (val lookup = findTargetPost(account, targetDid, excludedDids, allowedLangs)) {
                             is PostLookup.RateLimited -> {
                                 broadcastLog(
                                     "⏳ تم تجاوز الحد المسموح (429) أثناء جلب منشورات $cleanTarget - " +
@@ -285,7 +319,7 @@ class EngagementService : Service() {
                             }
 
                             is PostLookup.Unavailable -> {
-                                val reason = "الحساب أصبح غير صالح أثناء جلب المنشورات (معلّق أو الجلسة منتهية، رمز ${lookup.code})"
+                                val reason = "الحساب أصبح غير صالح أثناء جلب المنشورات حتى بعد محاولة تجديد الجلسة (رمز ${lookup.code})"
                                 broadcastLog("🚫 الحساب ${account.handle} $reason - يتم استبعاده فوراً من العملية.")
                                 excludeAccount(account.handle, reason)
                                 continue@targetLoop
@@ -300,7 +334,7 @@ class EngagementService : Service() {
                                 skippedNoPostCount++
                                 broadcastLog(
                                     "⏭️ تم تخطي $cleanTarget: لا يوجد له منشور أو رد مناسب " +
-                                        "(فقط إعادات نشر أو محتوى مرتبط بحسابات مستثناة)."
+                                        "(فقط إعادات نشر، أو محتوى مرتبط بحسابات مستثناة، أو ردود مغلقة، أو لغة غير مطابقة)."
                                 )
                                 continue@targetLoop
                             }
@@ -338,13 +372,14 @@ class EngagementService : Service() {
 
                                 val postBody = createRecordJson.toString()
                                     .toRequestBody("application/json".toMediaType())
-                                val commentReq = Request.Builder()
-                                    .url("https://bsky.social/xrpc/com.atproto.repo.createRecord")
-                                    .addHeader("Authorization", "Bearer ${account.jwt}")
-                                    .post(postBody)
-                                    .build()
 
-                                val commentRes = client.newCall(commentReq).execute()
+                                val commentRes = executeAuthorized(account) { jwt ->
+                                    Request.Builder()
+                                        .url("https://bsky.social/xrpc/com.atproto.repo.createRecord")
+                                        .addHeader("Authorization", "Bearer $jwt")
+                                        .post(postBody)
+                                        .build()
+                                }
                                 val commentBodyStr = commentRes.body?.string() ?: ""
 
                                 if (commentRes.code == 429) {
@@ -357,7 +392,7 @@ class EngagementService : Service() {
                                 }
 
                                 if (isAccountUnavailable(commentRes.code)) {
-                                    val reason = "الحساب أصبح غير صالح أثناء التعليق (معلّق أو الجلسة منتهية، رمز ${commentRes.code})"
+                                    val reason = "الحساب أصبح غير صالح أثناء التعليق حتى بعد محاولة تجديد الجلسة (رمز ${commentRes.code})"
                                     broadcastLog("🚫 الحساب ${account.handle} $reason - يتم استبعاده فوراً من العملية.")
                                     excludeAccount(account.handle, reason)
                                     continue@targetLoop
@@ -384,7 +419,7 @@ class EngagementService : Service() {
                                 } else {
                                     failedCount++
                                     broadcastLog("فشل التعليق من ${account.handle} على $cleanTarget")
-                                }
+     }
                             }
                         }
                     } else {
@@ -420,6 +455,20 @@ class EngagementService : Service() {
             val elapsedSecondsRemainder = (elapsedMs / 1000) % 60
             val excludedAccountsCount = accounts.size - activeAccounts.size
 
+            BotPrefs.addSessionHistoryEntry(
+                this@EngagementService,
+                BotPrefs.SessionHistoryEntry(
+                    timestampMillis = System.currentTimeMillis(),
+                    totalTargets = filteredTargets.size,
+                    success = successCount,
+                    failed = failedCount,
+                    skippedDuplicate = skippedDuplicateCount,
+                    skippedNoPost = skippedNoPostCount,
+                    excludedAccounts = excludedAccountsCount,
+                    elapsedMs = elapsedMs
+                )
+            )
+
             broadcastLog(
                 "📊 ملخص الجلسة: نجح $successCount | فشل $failedCount | تم تخطيه (سابقاً) $skippedDuplicateCount | بدون منشور أصلي $skippedNoPostCount | " +
                     "حسابات مستبعدة $excludedAccountsCount | الوقت الإجمالي ${elapsedMinutes} د ${elapsedSecondsRemainder} ث"
@@ -431,17 +480,64 @@ class EngagementService : Service() {
     }
 
     /**
+     * ينفّذ طلباً بحاجة توثيق، ويحاول تجديد الجلسة (refreshSession) تلقائياً مرة واحدة
+     * إذا رجع الخادم 401 (توكن منتهي)، ثم يعيد المحاولة بنفس الطلب بتوكن جديد.
+     * إن فشل التجديد أو استمر الرفض، يرجع الاستجابة الأخيرة كما هي (401/403...) ليتعامل
+     * معها المنادي عادة (يُعتبر عندها الحساب "غير صالح" فعلاً).
+     */
+    private fun executeAuthorized(account: AccountSession, buildRequest: (jwt: String) -> Request): Response {
+        var response = client.newCall(buildRequest(account.jwt)).execute()
+
+        if (response.code == 401) {
+            response.close()
+            if (refreshAccountSession(account)) {
+                response = client.newCall(buildRequest(account.jwt)).execute()
+            } else {
+                // نعيد تنفيذ الطلب الأصلي مرة أخيرة فقط لنحصل على استجابة صالحة نرجعها للمنادي
+                response = client.newCall(buildRequest(account.jwt)).execute()
+            }
+        }
+        return response
+    }
+
+    /** يحاول تجديد accessJwt عبر refreshJwt. يحدّث account.jwt (و refreshJwt إن رجع جديد) عند النجاح. */
+    private fun refreshAccountSession(account: AccountSession): Boolean {
+        if (account.refreshJwt.isBlank()) return false
+        return try {
+            val req = Request.Builder()
+                .url("https://bsky.social/xrpc/com.atproto.server.refreshSession")
+                .addHeader("Authorization", "Bearer ${account.refreshJwt}")
+                .post("".toRequestBody(null))
+                .build()
+            val res = client.newCall(req).execute()
+            val bodyStr = res.body?.string() ?: ""
+            if (!res.isSuccessful) return false
+
+            val json = JSONObject(bodyStr)
+            account.jwt = json.getString("accessJwt")
+            val newRefresh = json.optString("refreshJwt", "")
+            if (newRefresh.isNotEmpty()) account.refreshJwt = newRefresh
+            broadcastLog("🔄 تم تجديد جلسة الحساب ${account.handle} تلقائياً.")
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
      * يختار المنشور المناسب للتعليق عليه:
      * 1) آخر منشور أصلي كتبه صاحب الحساب، إذا كان عمره أقل من MAX_POST_AGE_HOURS ساعة.
      * 2) وإلا آخر رد كتبه صاحب الحساب (إن وُجد ورد أحدث من المنشور الأصلي).
      * 3) وإلا آخر منشور أصلي مهما كان عمره.
-     * يتخطى: إعادات النشر، ما كاتبه غير صاحب الحساب، والمحتوى المرتبط بالحسابات المستثناة
-     * (منشور مستثنى، رد على مستثنى، أو اقتباس من مستثنى).
+     * يتخطى: إعادات النشر، ما كاتبه غير صاحب الحساب، المحتوى المرتبط بالحسابات المستثناة
+     * (منشور مستثنى، رد على مستثنى، أو اقتباس من مستثنى)، المنشورات المغلقة الردود أو
+     * التي يحظر فيها صاحبها حساب البوت، وأي منشور بلغة لا تطابق allowedLangs (إن حُدّدت).
      */
     private fun findTargetPost(
         account: AccountSession,
         targetDid: String,
-        excludedDids: Set<String>
+        excludedDids: Set<String>,
+        allowedLangs: Set<String>
     ): PostLookup {
         val maxAgeMs = MAX_POST_AGE_HOURS * 3_600_000L
         val now = System.currentTimeMillis()
@@ -457,12 +553,12 @@ class EngagementService : Service() {
             val c = cursor
             if (c != null) url.append("&cursor=").append(URLEncoder.encode(c, "UTF-8"))
 
-            val res = client.newCall(
+            val res = executeAuthorized(account) { jwt ->
                 Request.Builder()
                     .url(url.toString())
-                    .addHeader("Authorization", "Bearer ${account.jwt}")
+                    .addHeader("Authorization", "Bearer $jwt")
                     .build()
-            ).execute()
+            }
             val bodyStr = res.body?.string() ?: ""
 
             if (res.code == 429) return PostLookup.RateLimited
@@ -483,6 +579,15 @@ class EngagementService : Service() {
                 val authorDid = post.getJSONObject("author").getString("did")
                 if (authorDid != targetDid || authorDid in excludedDids) continue
 
+                // تخطي المنشورات التي يحظر فيها صاحبها حساب البوت (سيفشل الرد أصلاً)
+                val authorBlockedBy = post.getJSONObject("author")
+                    .optJSONObject("viewer")?.optBoolean("blockedBy", false) == true
+                if (authorBlockedBy) continue
+
+                // تخطي المنشورات المغلقة الردود
+                val replyDisabled = post.optJSONObject("viewer")?.optBoolean("replyDisabled", false) == true
+                if (replyDisabled) continue
+
                 // تخطي اقتباسات منشورات المستثنين
                 val embed = post.optJSONObject("embed")
                 val quotedDid = embed?.optJSONObject("record")
@@ -491,9 +596,21 @@ class EngagementService : Service() {
                         ?.optJSONObject("author")?.optString("did")
                 if (!quotedDid.isNullOrEmpty() && quotedDid in excludedDids) continue
 
+                val record = post.optJSONObject("record")
+
+                // فلترة اللغة: نتخطى فقط إذا كانت لغات المنشور معروفة ولا تطابق المسموح
+                if (allowedLangs.isNotEmpty()) {
+                    val langsArr = record?.optJSONArray("langs")
+                    if (langsArr != null && langsArr.length() > 0) {
+                        val postLangs = (0 until langsArr.length())
+                            .map { langsArr.getString(it).lowercase().substringBefore("-") }
+                        if (postLangs.none { it in allowedLangs }) continue
+                    }
+                }
+
                 val uri = post.getString("uri")
                 val cid = post.getString("cid")
-                val replyRef = post.optJSONObject("record")?.optJSONObject("reply")
+                val replyRef = record?.optJSONObject("reply")
 
                 if (replyRef == null) {
                     // منشور أصلي: لأن الترتيب من الأحدث للأقدم، أي رد رأيناه قبله هو أحدث منه
@@ -584,10 +701,13 @@ class EngagementService : Service() {
     }
 
     /**
-     * إشعار خاص ومنفصل (يظهر كتنبيه منبثق مستقل عن إشعار التقدّم) + broadcast،
-     * يُطلق فوراً عند استبعاد أي حساب بوت من العملية الحالية لأي سبب.
+     * إشعار خاص ومنفصل (يظهر كتنبيه منبثق مستقل عن إشعار التقدّم) + broadcast + تعطيل دائم
+     * محفوظ في التخزين المشفّر، يُطلق فوراً عند استبعاد أي حساب بوت من العملية لأي سبب.
+     * الحساب لن يُستخدم تلقائياً في أي جلسة قادمة حتى تتم إعادة تفعيله يدوياً من شاشة السجل.
      */
     private fun notifyAccountExcluded(handle: String, reason: String) {
+        BotPrefs.disableAccount(this, handle, reason)
+
         val intent = Intent(BROADCAST_ACCOUNT_EXCLUDED).apply {
             setPackage(packageName)
             putExtra(EXTRA_EXCLUDED_ACCOUNT_HANDLE, handle)
