@@ -7,7 +7,7 @@
     <application
         android:allowBackup="true"
         android:label="Bluesky Bot Hub"
-        android:theme="@style/Theme.Material3.Dark.NoActionBar">
+        android:theme="@style/Theme.BlueskyBot">
         <activity
             android:name=".LoginActivity"
             android:exported="true">
