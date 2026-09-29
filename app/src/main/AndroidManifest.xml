@@ -19,6 +19,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="false" />
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false" />
         <service
             android:name=".EngagementService"
             android:foregroundServiceType="dataSync"
