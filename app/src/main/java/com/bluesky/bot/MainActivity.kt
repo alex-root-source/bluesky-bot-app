@@ -22,6 +22,7 @@ class MainActivity : AppCompatActivity() {
     private var accountHandles: ArrayList<String> = arrayListOf()
     private var accountDids: ArrayList<String> = arrayListOf()
     private var accountJwts: ArrayList<String> = arrayListOf()
+    private var accountRefreshJwts: ArrayList<String> = arrayListOf()
 
     private lateinit var loggedInAsText: TextView
     private lateinit var logoutBtn: TextView
@@ -30,6 +31,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var commentInput: EditText
     private lateinit var delayMinInput: EditText
     private lateinit var delayMaxInput: EditText
+    private lateinit var allowedLangsInput: EditText
+    private lateinit var historyBtn: TextView
     private lateinit var startBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var logText: TextView
@@ -57,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         accountHandles = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_HANDLES) ?: arrayListOf()
         accountDids = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
         accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
+        accountRefreshJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
 
         if (accountHandles.isEmpty()) {
             // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
@@ -74,6 +78,8 @@ class MainActivity : AppCompatActivity() {
         commentInput = findViewById(R.id.commentInput)
         delayMinInput = findViewById(R.id.delayMinInput)
         delayMaxInput = findViewById(R.id.delayMaxInput)
+        allowedLangsInput = findViewById(R.id.allowedLangsInput)
+        historyBtn = findViewById(R.id.historyBtn)
         startBtn = findViewById(R.id.startBtn)
         stopBtn = findViewById(R.id.stopBtn)
         logText = findViewById(R.id.logText)
@@ -84,10 +90,15 @@ class MainActivity : AppCompatActivity() {
         BotPrefs.loadComment(this)?.let { commentInput.setText(it) }
         BotPrefs.loadDelayMin(this)?.let { delayMinInput.setText(it) }
         BotPrefs.loadDelayMax(this)?.let { delayMaxInput.setText(it) }
+        BotPrefs.loadAllowedLangs(this)?.let { allowedLangsInput.setText(it) }
 
         loggedInAsText.text = "مسجل الدخول بـ ${accountHandles.size} حساب: ${accountHandles.joinToString(", ")}"
 
         requestNotificationPermissionIfNeeded()
+
+        historyBtn.setOnClickListener {
+            startActivity(Intent(this, HistoryActivity::class.java))
+        }
 
         startBtn.setOnClickListener {
             if (accountHandles.isEmpty()) {
@@ -133,29 +144,52 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
+            val allowedLangs = allowedLangsInput.text.toString()
+                .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+
             BotPrefs.saveForm(
                 this,
                 handlesInput.text.toString(),
                 excludeInput.text.toString(),
                 commentInput.text.toString(),
                 delayMin.toString(),
-                delayMax.toString()
+                delayMax.toString(),
+                allowedLangsInput.text.toString()
             )
+
+            // إزالة الحسابات المعطّلة بشكل دائم من قائمة حسابات البوت المستخدمة هذه الجلسة
+            val disabledBots = BotPrefs.getDisabledAccounts(this)
+            val activeIndices = accountHandles.indices.filter { accountHandles[it] !in disabledBots }
+            if (activeIndices.size < accountHandles.size) {
+                addLog("⏭️ تم استبعاد ${accountHandles.size - activeIndices.size} حساب بوت معطّل مسبقاً (راجع شاشة الحسابات المعطّلة).")
+            }
+            if (activeIndices.isEmpty()) {
+                addLog("خطأ: جميع حسابات البوت معطّلة حالياً. أعد تفعيل حساب واحد على الأقل من شاشة السجل.")
+                return@setOnClickListener
+            }
+            val activeAccountHandles = ArrayList(activeIndices.map { accountHandles[it] })
+            val activeAccountDids = ArrayList(activeIndices.map { accountDids[it] })
+            val activeAccountJwts = ArrayList(activeIndices.map { accountJwts[it] })
+            val activeAccountRefreshJwts = ArrayList(activeIndices.map {
+                accountRefreshJwts.getOrElse(it) { "" }
+            })
 
             val serviceIntent = Intent(this, EngagementService::class.java).apply {
                 action = EngagementService.ACTION_START
-                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_HANDLES, accountHandles)
-                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_DIDS, accountDids)
-                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, accountJwts)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_HANDLES, activeAccountHandles)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_DIDS, activeAccountDids)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, activeAccountJwts)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_REFRESH_JWTS, activeAccountRefreshJwts)
                 putStringArrayListExtra(EngagementService.EXTRA_TARGET_HANDLES, ArrayList(handles))
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
                 putStringArrayListExtra(EngagementService.EXTRA_EXCLUDED_HANDLES, ArrayList(excludedSet))
+                putStringArrayListExtra(EngagementService.EXTRA_ALLOWED_LANGS, ArrayList(allowedLangs))
                 putExtra(EngagementService.EXTRA_DELAY_MIN_SECONDS, delayMin)
                 putExtra(EngagementService.EXTRA_DELAY_MAX_SECONDS, delayMax)
             }
             ContextCompat.startForegroundService(this, serviceIntent)
             startBtn.isEnabled = false
-            addLog("تم إرسال المهمة إلى الخدمة الخلفية، بتوزيع عشوائي على ${accountHandles.size} حساب...")
+            addLog("تم إرسال المهمة إلى الخدمة الخلفية، بتوزيع عشوائي على ${activeAccountHandles.size} حساب...")
         }
 
         stopBtn.setOnClickListener {
@@ -175,6 +209,7 @@ class MainActivity : AppCompatActivity() {
             accountHandles = arrayListOf()
             accountDids = arrayListOf()
             accountJwts = arrayListOf()
+            accountRefreshJwts = arrayListOf()
 
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
