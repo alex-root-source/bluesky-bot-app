@@ -1,53 +1,88 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#0F172A"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="24dp">
+    android:background="@color/bg_base"
+    android:fillViewport="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Bluesky Bot Hub"
-        android:textColor="#0085FF"
-        android:textSize="26sp"
-        android:textStyle="bold"
-        android:layout_marginBottom="8dp" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="أدخل حساب واحد أو أكثر"
-        android:textColor="#94A3B8"
-        android:textSize="14sp"
-        android:layout_marginBottom="20dp" />
-
-    <EditText
-        android:id="@+id/accountsInput"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="150dp"
-        android:hint="handle:app_password (حساب واحد في كل سطر)"
-        android:gravity="top"
-        android:inputType="textMultiLine"
-        android:textColor="#FFFFFF"
-        android:textColorHint="#94A3B8"
-        android:layout_marginBottom="20dp" />
-
-    <Button
-        android:id="@+id/loginBtn"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="تسجيل الدخول" />
-
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:textColor="#F87171"
-        android:textSize="13sp"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
         android:gravity="center"
-        android:layout_marginTop="16dp" />
+        android:padding="28dp">
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🦋"
+            android:textSize="44sp"
+            android:layout_marginBottom="12dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Bluesky Bot Hub"
+            android:textColor="@color/text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            android:layout_marginBottom="6dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="أدخل حساب واحد أو أكثر لتسجيل الدخول"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp"
+            android:layout_marginBottom="24dp" />
+
+        <com.google.android.material.card.MaterialCardView
+            style="@style/Widget.BlueskyBot.CardView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="handle:app_password (حساب واحد في كل سطر)">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/accountsInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="150dp"
+                        android:gravity="top|start"
+                        android:inputType="textMultiLine"
+                        android:textColor="@color/text_primary" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/loginBtn"
+                    style="@style/Widget.BlueskyBot.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="16dp"
+                    android:text="تسجيل الدخول"
+                    android:backgroundTint="@color/brand_primary"
+                    android:textColor="@color/brand_on_primary" />
+
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textColor="@color/brand_error"
+                    android:textSize="13sp"
+                    android:gravity="center"
+                    android:layout_marginTop="14dp" />
+
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+    </LinearLayout>
+</ScrollView>
