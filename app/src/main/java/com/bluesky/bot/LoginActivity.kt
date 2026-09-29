@@ -24,6 +24,7 @@ class LoginActivity : AppCompatActivity() {
         const val EXTRA_ACCOUNT_HANDLES = "extra_account_handles"
         const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
         const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
+        const val EXTRA_ACCOUNT_REFRESH_JWTS = "extra_account_refresh_jwts"
     }
 
     private val client = OkHttpClient()
@@ -55,6 +56,7 @@ class LoginActivity : AppCompatActivity() {
             val successHandles = ArrayList<String>()
             val successDids = ArrayList<String>()
             val successJwts = ArrayList<String>()
+            val successRefreshJwts = ArrayList<String>()
             val failedHandles = ArrayList<String>()
 
             scope.launch(Dispatchers.IO) {
@@ -90,6 +92,7 @@ class LoginActivity : AppCompatActivity() {
                             successHandles.add(handle)
                             successDids.add(resJson.getString("did"))
                             successJwts.add(resJson.getString("accessJwt"))
+                            successRefreshJwts.add(resJson.optString("refreshJwt", ""))
                         } else {
                             failedHandles.add(handle)
                         }
@@ -113,6 +116,7 @@ class LoginActivity : AppCompatActivity() {
                         putStringArrayListExtra(EXTRA_ACCOUNT_HANDLES, successHandles)
                         putStringArrayListExtra(EXTRA_ACCOUNT_DIDS, successDids)
                         putStringArrayListExtra(EXTRA_ACCOUNT_JWTS, successJwts)
+                        putStringArrayListExtra(EXTRA_ACCOUNT_REFRESH_JWTS, successRefreshJwts)
                     }
                     startActivity(intent)
                     finish()
