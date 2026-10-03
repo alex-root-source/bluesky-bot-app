@@ -349,7 +349,7 @@ class EngagementService : Service() {
                                         PendingVisibilityCheck(
                                             accountHandle = account.handle,
                                             ourReplyUri = newPostUri,
-                                            parentPostUri = postUri,
+                                            parentPostUri = lookup.uri,
                                             targetHandle = cleanTarget,
                                             dueAtMillis = System.currentTimeMillis() + PENDING_CHECK_DELAY_MS
                                         )
