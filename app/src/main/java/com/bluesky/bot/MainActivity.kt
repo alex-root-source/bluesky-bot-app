@@ -14,8 +14,15 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.google.android.material.floatingactionbutton.FloatingActionButton
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -32,10 +39,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var delayMinInput: EditText
     private lateinit var delayMaxInput: EditText
     private lateinit var allowedLangsInput: EditText
+    private lateinit var minFollowersInput: EditText
+    private lateinit var maxRepliesInput: EditText
     private lateinit var historyBtn: TextView
     private lateinit var startBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var logText: TextView
+    private lateinit var fabMain: FloatingActionButton
+    private lateinit var fabWarmup: FloatingActionButton
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -63,7 +74,6 @@ class MainActivity : AppCompatActivity() {
         accountRefreshJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
 
         if (accountHandles.isEmpty()) {
-            // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -79,25 +89,46 @@ class MainActivity : AppCompatActivity() {
         delayMinInput = findViewById(R.id.delayMinInput)
         delayMaxInput = findViewById(R.id.delayMaxInput)
         allowedLangsInput = findViewById(R.id.allowedLangsInput)
+        minFollowersInput = findViewById(R.id.minFollowersInput)
+        maxRepliesInput = findViewById(R.id.maxRepliesInput)
         historyBtn = findViewById(R.id.historyBtn)
         startBtn = findViewById(R.id.startBtn)
         stopBtn = findViewById(R.id.stopBtn)
         logText = findViewById(R.id.logText)
+        fabMain = findViewById(R.id.fabMain)
+        fabWarmup = findViewById(R.id.fabWarmup)
 
-        // استرجاع آخر بيانات محفوظة (إن وجدت) حتى ما تضيع بين مرات فتح التطبيق
         BotPrefs.loadHandles(this)?.let { handlesInput.setText(it) }
         BotPrefs.loadExclude(this)?.let { excludeInput.setText(it) }
         BotPrefs.loadComment(this)?.let { commentInput.setText(it) }
         BotPrefs.loadDelayMin(this)?.let { delayMinInput.setText(it) }
         BotPrefs.loadDelayMax(this)?.let { delayMaxInput.setText(it) }
         BotPrefs.loadAllowedLangs(this)?.let { allowedLangsInput.setText(it) }
+        BotPrefs.loadMinFollowers(this)?.let { minFollowersInput.setText(it) }
+        BotPrefs.loadMaxReplies(this)?.let { maxRepliesInput.setText(it) }
 
         loggedInAsText.text = "مسجل الدخول بـ ${accountHandles.size} حساب: ${accountHandles.joinToString(", ")}"
 
         requestNotificationPermissionIfNeeded()
+        rememberAllAccounts()
+        scheduleAccountHealthCheck()
 
         historyBtn.setOnClickListener {
             startActivity(Intent(this, HistoryActivity::class.java))
+        }
+
+        fabMain.setOnClickListener {
+            startBtn.performClick()
+        }
+
+        fabWarmup.setOnClickListener {
+            val warmupIntent = Intent(this, WarmupActivity::class.java).apply {
+                putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_HANDLES, accountHandles)
+                putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS, accountDids)
+                putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS, accountJwts)
+                putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS, accountRefreshJwts)
+            }
+            startActivity(warmupIntent)
         }
 
         startBtn.setOnClickListener {
@@ -146,6 +177,8 @@ class MainActivity : AppCompatActivity() {
 
             val allowedLangs = allowedLangsInput.text.toString()
                 .split(",").map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+            val minFollowers = minFollowersInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
+            val maxReplies = maxRepliesInput.text.toString().trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
 
             BotPrefs.saveForm(
                 this,
@@ -154,10 +187,11 @@ class MainActivity : AppCompatActivity() {
                 commentInput.text.toString(),
                 delayMin.toString(),
                 delayMax.toString(),
-                allowedLangsInput.text.toString()
+                allowedLangsInput.text.toString(),
+                minFollowersInput.text.toString(),
+                maxRepliesInput.text.toString()
             )
 
-            // إزالة الحسابات المعطّلة بشكل دائم من قائمة حسابات البوت المستخدمة هذه الجلسة
             val disabledBots = BotPrefs.getDisabledAccounts(this)
             val activeIndices = accountHandles.indices.filter { accountHandles[it] !in disabledBots }
             if (activeIndices.size < accountHandles.size) {
@@ -184,6 +218,8 @@ class MainActivity : AppCompatActivity() {
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
                 putStringArrayListExtra(EngagementService.EXTRA_EXCLUDED_HANDLES, ArrayList(excludedSet))
                 putStringArrayListExtra(EngagementService.EXTRA_ALLOWED_LANGS, ArrayList(allowedLangs))
+                putExtra(EngagementService.EXTRA_MIN_FOLLOWERS, minFollowers)
+                putExtra(EngagementService.EXTRA_MAX_REPLIES, maxReplies)
                 putExtra(EngagementService.EXTRA_DELAY_MIN_SECONDS, delayMin)
                 putExtra(EngagementService.EXTRA_DELAY_MAX_SECONDS, delayMax)
             }
@@ -216,20 +252,32 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** يحفظ كل الحسابات المسجّلة دخولها في مخزن "الحسابات المعروفة" حتى يقدر الفحص الدوري بالخلفية يفحصها. */
+    private fun rememberAllAccounts() {
+        accountHandles.indices.forEach { i ->
+            BotPrefs.rememberAccount(this, accountHandles[i], accountRefreshJwts.getOrElse(i) { "" })
+        }
+    }
+
+    /** يجدول فحصاً دورياً كل 6 ساعات للتأكد من سلامة الحسابات حتى بدون تشغيل أي جلسة. */
+    private fun scheduleAccountHealthCheck() {
+        val request = PeriodicWorkRequestBuilder<AccountHealthCheckWorker>(6, TimeUnit.HOURS)
+            .setConstraints(
+                Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
+            )
+            .build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            AccountHealthCheckWorker.UNIQUE_WORK_NAME,
+            ExistingPeriodicWorkPolicy.KEEP,
+            request
+        )
+    }
+
     private fun addLog(msg: String) {
         val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
         logText.append("[$time] $msg\n")
     }
 
-    /**
-     * يحوّل أي صيغة مكتوبة (رابط كامل، بـ @، بأحرف كبيرة...) إلى هاندل نظيف موحّد،
-     * حتى تقدر المقارنة والفلترة (تكرار/استبعاد) تشتغل بشكل صحيح.
-     * أمثلة تدخل كلها لنفس النتيجة "micheeel.bsky.social":
-     *   - "https://bsky.app/profile/micheeel.bsky.social"
-     *   - "https://bsky.app/profile/micheeel.bsky.social/post/xyz"
-     *   - "@Micheeel.bsky.social"
-     *   - "  micheeel.bsky.social  "
-     */
     private fun normalizeHandle(raw: String): String {
         var h = raw.trim()
         if (h.isEmpty()) return ""
