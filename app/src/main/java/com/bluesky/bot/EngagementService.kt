@@ -23,7 +23,8 @@ class EngagementService : Service() {
 
     private data class PendingVisibilityCheck(
         val accountHandle: String,
-        val postUri: String,
+        val ourReplyUri: String,
+        val parentPostUri: String,
         val targetHandle: String,
         val dueAtMillis: Long
     )
@@ -115,8 +116,6 @@ class EngagementService : Service() {
                         refreshJwt = accountRefreshJwts.getOrElse(it) { "" }
                     )
                 }
-                // نتذكر الحساب (هاندل + refreshJwt) حتى يستطيع الفحص الدوري بالخلفية
-                // التأكد من سلامته لاحقاً حتى بدون تشغيل أي جلسة.
                 accounts.forEach { BotPrefs.rememberAccount(this, it.handle, it.refreshJwt) }
 
                 startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, targetHandles.size))
@@ -216,7 +215,9 @@ class EngagementService : Service() {
                 if (due.isEmpty()) return
                 pendingChecks.removeAll(due)
                 for (item in due) {
-                    val shouldExclude = verifyVisibilityAndWarn(item.accountHandle, item.postUri, item.targetHandle)
+                    val shouldExclude = verifyVisibilityAndWarn(
+                        item.accountHandle, item.ourReplyUri, item.parentPostUri, item.targetHandle
+                    )
                     if (shouldExclude) {
                         excludeAccount(
                             item.accountHandle,
@@ -347,7 +348,8 @@ class EngagementService : Service() {
                                     pendingChecks.add(
                                         PendingVisibilityCheck(
                                             accountHandle = account.handle,
-                                            postUri = newPostUri,
+                                            ourReplyUri = newPostUri,
+                                            parentPostUri = postUri,
                                             targetHandle = cleanTarget,
                                             dueAtMillis = System.currentTimeMillis() + PENDING_CHECK_DELAY_MS
                                         )
@@ -413,8 +415,10 @@ class EngagementService : Service() {
         }
     }
 
-    private suspend fun verifyVisibilityAndWarn(accountHandle: String, postUri: String, targetHandle: String): Boolean {
-        val visible = api.isPostPubliclyVisible(postUri)
+    private suspend fun verifyVisibilityAndWarn(
+        accountHandle: String, ourReplyUri: String, parentPostUri: String, targetHandle: String
+    ): Boolean {
+        val visible = api.isReplyVisibleInThread(parentPostUri, ourReplyUri)
 
         if (visible) {
             hiddenStreakByAccount[accountHandle] = 0
@@ -428,10 +432,10 @@ class EngagementService : Service() {
             "⚠️ تنبيه: تعليق $accountHandle على $targetHandle قد لا يكون ظاهراً للعامة. " +
                 "($streak من $VISIBILITY_HIDDEN_STREAK_ALERT)"
         )
-
+        
         if (streak >= VISIBILITY_HIDDEN_STREAK_ALERT) {
             broadcastLog(
-       "🚨 تم استبعاد حساب $accountHandle من العملية الحالية: آخر $streak تعليقات لم تظهر " +
+                "🚨 تم استبعاد حساب $accountHandle من العملية الحالية: آخر $streak تعليقات لم تظهر " +
                     "للعامة (يُحتمل أن الحساب مقيّد من بلوسكاي). سيتم توزيع الأهداف المتبقية على بقية الحسابات."
             )
             return true
