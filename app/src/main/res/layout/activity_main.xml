@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/bg_base"
-    android:fillViewport="true">
+    android:layout_height="match_parent">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/bg_base"
+        android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:paddingLeft="20dp"
+        android:paddingTop="20dp"
+        android:paddingRight="20dp"
+        android:paddingBottom="100dp">
 
         <!-- ===== الرأس ===== -->
         <LinearLayout
@@ -99,7 +106,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- ===== بطاقة: التعليق والتوقيت ===== -->
+        <!-- ===== بطاقة: التعليق والتوقيت وفلاتر الجودة ===== -->
         <com.google.android.material.card.MaterialCardView
             style="@style/Widget.BlueskyBot.CardView"
             android:layout_width="match_parent"
@@ -188,10 +195,47 @@
 
                 </com.google.android.material.textfield.TextInputLayout>
 
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="12dp">
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:hint="أقل متابعين (اختياري)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/minFollowersInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:textColor="@color/text_primary" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="10dp"
+                        android:hint="أكبر ردود (اختياري)">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/maxRepliesInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:inputType="number"
+                            android:textColor="@color/text_primary" />
+
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                </LinearLayout>
+
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
-
-        <!-- ===== رابط شاشة السجل ===== -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/historyBtn"
             style="@style/Widget.BlueskyBot.Button.Outlined"
@@ -251,4 +295,31 @@
         </com.google.android.material.card.MaterialCardView>
 
     </LinearLayout>
-</ScrollView>
+    </ScrollView>
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabWarmup"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:layout_marginBottom="92dp"
+        android:contentDescription="وضع الإحماء"
+        android:src="@android:drawable/ic_menu_recent_history"
+        app:tint="@color/brand_on_secondary"
+        app:backgroundTint="@color/brand_secondary"
+        app:elevation="4dp" />
+
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabMain"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp"
+        android:contentDescription="الوضع الرئيسي"
+        android:src="@android:drawable/ic_media_play"
+        app:tint="@color/brand_on_primary"
+        app:backgroundTint="@color/brand_primary"
+        app:elevation="4dp" />
+
+</FrameLayout>
