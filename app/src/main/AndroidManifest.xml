@@ -22,8 +22,15 @@
         <activity
             android:name=".HistoryActivity"
             android:exported="false" />
+        <activity
+            android:name=".WarmupActivity"
+            android:exported="false" />
         <service
             android:name=".EngagementService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+        <service
+            android:name=".WarmupEngagementService"
             android:foregroundServiceType="dataSync"
             android:exported="false" />
     </application>
