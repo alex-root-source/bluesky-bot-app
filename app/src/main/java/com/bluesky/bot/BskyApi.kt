@@ -114,20 +114,40 @@ class BskyApi(
         }
     }
 
-    fun isPostPubliclyVisible(postUri: String): Boolean {
+    /**
+     * يتحقق من ظهور ردّنا فعلياً ضمن شجرة ردود المنشور الذي علّقنا عليه - هذا هو ما يراه
+     * أي شخص آخر يفتح ذلك المنشور، على عكس جلب تعليقنا بمفرده (الذي يبقى "موجوداً" على
+     * الشبكة حتى لو بلوسكاي فلترته من ظهوره ضمن الردود الفعلية - وهو شكل شائع للحجب
+     * الصامت/shadowban). عند فشل الجلب (خطأ شبكة مؤقت)، نرجع true حتى لا نعاقب الحساب
+     * على مشكلة اتصال عابرة؛ false لا تُرجَع إلا بعد جلب الشجرة فعلياً وعدم إيجاد ردّنا فيها.
+     */
+    fun isReplyVisibleInThread(parentPostUri: String, ourReplyUri: String): Boolean {
         return try {
-            val encodedUri = URLEncoder.encode(postUri, "UTF-8")
+            val encodedUri = URLEncoder.encode(parentPostUri, "UTF-8")
             val req = Request.Builder()
-                .url("https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=$encodedUri&depth=0")
+                .url("https://public.api.bsky.app/xrpc/app.bsky.feed.getPostThread?uri=$encodedUri&depth=25")
                 .build()
             val res = client.newCall(req).execute()
-            if (!res.isSuccessful) return false
-            val bodyStr = res.body?.string() ?: return false
-            val thread = JSONObject(bodyStr).optJSONObject("thread") ?: return false
-            thread.optString("\$type") == "app.bsky.feed.defs#threadViewPost"
+            if (!res.isSuccessful) return true
+            val bodyStr = res.body?.string() ?: return true
+            val thread = JSONObject(bodyStr).optJSONObject("thread") ?: return true
+            if (thread.optString("\$type") != "app.bsky.feed.defs#threadViewPost") return true
+            findReplyInThread(thread, ourReplyUri)
         } catch (e: Exception) {
-            false
+            true
         }
+    }
+
+    private fun findReplyInThread(threadNode: JSONObject, targetUri: String): Boolean {
+        val replies = threadNode.optJSONArray("replies") ?: return false
+        for (i in 0 until replies.length()) {
+            val replyNode = replies.getJSONObject(i)
+            if (replyNode.optString("\$type") != "app.bsky.feed.defs#threadViewPost") continue
+            val post = replyNode.optJSONObject("post") ?: continue
+            if (post.optString("uri") == targetUri) return true
+            if (findReplyInThread(replyNode, targetUri)) return true
+        }
+        return false
     }
 
     /**
