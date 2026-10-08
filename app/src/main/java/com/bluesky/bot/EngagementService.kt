@@ -37,6 +37,7 @@ class EngagementService : Service() {
         const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
         const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
         const val EXTRA_ACCOUNT_REFRESH_JWTS = "extra_account_refresh_jwts"
+        const val EXTRA_ACCOUNT_PDS_URLS = "extra_account_pds_urls"
         const val EXTRA_TARGET_HANDLES = "extra_target_handles"
         const val EXTRA_COMMENTS = "extra_comments"
         const val EXTRA_EXCLUDED_HANDLES = "extra_excluded_handles"
@@ -88,6 +89,7 @@ class EngagementService : Service() {
                 val accountDids = intent.getStringArrayListExtra(EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
                 val accountJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
                 val accountRefreshJwts = intent.getStringArrayListExtra(EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
+                val accountPdsUrls = intent.getStringArrayListExtra(EXTRA_ACCOUNT_PDS_URLS) ?: arrayListOf()
                 val targetHandles = intent.getStringArrayListExtra(EXTRA_TARGET_HANDLES) ?: arrayListOf()
                 val comments = intent.getStringArrayListExtra(EXTRA_COMMENTS) ?: arrayListOf()
                 val excludedHandles = intent.getStringArrayListExtra(EXTRA_EXCLUDED_HANDLES) ?: arrayListOf()
@@ -113,10 +115,13 @@ class EngagementService : Service() {
                         handle = accountHandles[it],
                         did = accountDids[it],
                         jwt = accountJwts[it],
-                        refreshJwt = accountRefreshJwts.getOrElse(it) { "" }
+                        refreshJwt = accountRefreshJwts.getOrElse(it) { "" },
+                        pdsUrl = accountPdsUrls.getOrElse(it) { BskyApi.DEFAULT_PDS }
                     )
                 }
-                accounts.forEach { BotPrefs.rememberAccount(this, it.handle, it.refreshJwt) }
+                // نتذكر الحساب (هاندل + refreshJwt) حتى يستطيع الفحص الدوري بالخلفية
+                // التأكد من سلامته لاحقاً حتى بدون تشغيل أي جلسة.
+                accounts.forEach { BotPrefs.rememberAccount(this, it.handle, it.refreshJwt, it.pdsUrl) }
 
                 startForeground(NOTIFICATION_ID, buildNotification("بدء التفاعل...", 0, targetHandles.size))
                 startEngagement(
@@ -432,7 +437,7 @@ class EngagementService : Service() {
             "⚠️ تنبيه: تعليق $accountHandle على $targetHandle قد لا يكون ظاهراً للعامة. " +
                 "($streak من $VISIBILITY_HIDDEN_STREAK_ALERT)"
         )
-        
+
         if (streak >= VISIBILITY_HIDDEN_STREAK_ALERT) {
             broadcastLog(
                 "🚨 تم استبعاد حساب $accountHandle من العملية الحالية: آخر $streak تعليقات لم تظهر " +
