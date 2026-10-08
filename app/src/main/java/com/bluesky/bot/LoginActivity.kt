@@ -12,11 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 class LoginActivity : AppCompatActivity() {
 
@@ -25,9 +21,11 @@ class LoginActivity : AppCompatActivity() {
         const val EXTRA_ACCOUNT_DIDS = "extra_account_dids"
         const val EXTRA_ACCOUNT_JWTS = "extra_account_jwts"
         const val EXTRA_ACCOUNT_REFRESH_JWTS = "extra_account_refresh_jwts"
+        const val EXTRA_ACCOUNT_PDS_URLS = "extra_account_pds_urls"
     }
 
     private val client = OkHttpClient()
+    private val api = BskyApi(client) { /* لا حاجة لسجل مرئي أثناء تسجيل الدخول */ }
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     private lateinit var accountsInput: EditText
@@ -57,6 +55,7 @@ class LoginActivity : AppCompatActivity() {
             val successDids = ArrayList<String>()
             val successJwts = ArrayList<String>()
             val successRefreshJwts = ArrayList<String>()
+            val successPdsUrls = ArrayList<String>()
             val failedHandles = ArrayList<String>()
 
             scope.launch(Dispatchers.IO) {
@@ -66,45 +65,34 @@ class LoginActivity : AppCompatActivity() {
                         failedHandles.add(line)
                         continue
                     }
-                    val handle = parts[0].trim()
+                    val identifier = parts[0].trim()
                     val pass = parts[1].trim()
 
                     withContext(Dispatchers.Main) {
-                        statusText.text = "تسجيل الدخول (${i + 1}/${lines.size}): $handle..."
+                        statusText.text = "جاري اكتشاف خادم الحساب وتسجيل الدخول (${i + 1}/${lines.size}): $identifier..."
                     }
 
-                    try {
-                        val json = JSONObject().apply {
-                            put("identifier", handle)
-                            put("password", pass)
+                    // يكتشف خادم الحساب الحقيقي (PDS) تلقائياً قبل تسجيل الدخول - يعمل
+                    // بنفس الدقة سواء كان الحساب على bsky.social أو أي خادم مستقل آخر
+                    // (بلاك سكاي، إيروسكاي، أو أي PDS مستقل على الشبكة).
+                    when (val result = api.login(identifier, pass)) {
+                        is BskyApi.LoginResult.Success -> {
+                            successHandles.add(result.handle)
+                            successDids.add(result.did)
+                            successJwts.add(result.accessJwt)
+                            successRefreshJwts.add(result.refreshJwt)
+                            successPdsUrls.add(result.pdsUrl)
                         }
-                        val body = json.toString().toRequestBody("application/json".toMediaType())
-                        val request = Request.Builder()
-                            .url("https://bsky.social/xrpc/com.atproto.server.createSession")
-                            .post(body)
-                            .build()
-
-                        val response = client.newCall(request).execute()
-                        val resStr = response.body?.string() ?: ""
-
-                        if (response.isSuccessful) {
-                            val resJson = JSONObject(resStr)
-                            successHandles.add(handle)
-                            successDids.add(resJson.getString("did"))
-                            successJwts.add(resJson.getString("accessJwt"))
-                            successRefreshJwts.add(resJson.optString("refreshJwt", ""))
-                        } else {
-                            failedHandles.add(handle)
+                        is BskyApi.LoginResult.Failure -> {
+                            failedHandles.add("$identifier (${result.reason})")
                         }
-                    } catch (e: Exception) {
-                        failedHandles.add(handle)
                     }
                 }
 
                 withContext(Dispatchers.Main) {
                     if (successHandles.isEmpty()) {
                         loginBtn.isEnabled = true
-                        statusText.text = "فشل تسجيل الدخول لجميع الحسابات. تحقق من البيانات (الصيغة: handle:password)."
+                        statusText.text = "فشل تسجيل الدخول لجميع الحسابات:\n${failedHandles.joinToString("\n")}"
                         return@withContext
                     }
 
@@ -117,6 +105,7 @@ class LoginActivity : AppCompatActivity() {
                         putStringArrayListExtra(EXTRA_ACCOUNT_DIDS, successDids)
                         putStringArrayListExtra(EXTRA_ACCOUNT_JWTS, successJwts)
                         putStringArrayListExtra(EXTRA_ACCOUNT_REFRESH_JWTS, successRefreshJwts)
+                        putStringArrayListExtra(EXTRA_ACCOUNT_PDS_URLS, successPdsUrls)
                     }
                     startActivity(intent)
                     finish()
