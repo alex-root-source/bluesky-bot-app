@@ -21,8 +21,22 @@ class BskyApi(
         val handle: String,
         val did: String,
         var jwt: String,
-        var refreshJwt: String
+        var refreshJwt: String,
+        /** خادم الحساب الشخصي (PDS) المكتشف - مثل https://bsky.social أو أي خادم مستقل آخر. */
+        val pdsUrl: String = DEFAULT_PDS
     )
+
+    /** نتيجة تسجيل الدخول: تحمل الخادم الحقيقي المكتشف لحساب هذا المستخدم. */
+    sealed class LoginResult {
+        data class Success(
+            val handle: String,
+            val did: String,
+            val pdsUrl: String,
+            val accessJwt: String,
+            val refreshJwt: String
+        ) : LoginResult()
+        data class Failure(val reason: String) : LoginResult()
+    }
 
     sealed class PostLookup {
         data class Found(
@@ -39,6 +53,7 @@ class BskyApi(
     }
 
     companion object {
+        const val DEFAULT_PDS = "https://bsky.social"
         private const val FEED_PAGE_SIZE = 50
         private const val MAX_FEED_PAGES = 3
         private const val MAX_POST_AGE_HOURS = 24L
@@ -62,7 +77,7 @@ class BskyApi(
         if (account.refreshJwt.isBlank()) return false
         return try {
             val req = Request.Builder()
-                .url("https://bsky.social/xrpc/com.atproto.server.refreshSession")
+                .url("${account.pdsUrl}/xrpc/com.atproto.server.refreshSession")
                 .addHeader("Authorization", "Bearer ${account.refreshJwt}")
                 .post("".toRequestBody(null))
                 .build()
@@ -93,6 +108,88 @@ class BskyApi(
             if (res.isSuccessful) JSONObject(body).getString("did") else null
         } catch (e: Exception) {
             null
+        }
+    }
+
+    /**
+     * يكتشف خادم الحساب الشخصي (PDS) الحقيقي لحساب معيّن عبر قراءة وثيقة الـ DID الخاصة به:
+     * - did:plc:xxx → تُقرأ من سجل PLC العام (plc.directory).
+     * - did:web:domain → تُقرأ من domain/.well-known/did.json مباشرة.
+     * يبحث داخل مصفوفة "service" عن الخدمة من نوع AtprotoPersonalDataServer ويرجع عنوانها.
+     * عند أي فشل (شبكة/تنسيق)، يرجع الخادم الافتراضي bsky.social كأكثر الحالات شيوعاً.
+     */
+    fun discoverPdsUrl(did: String): String {
+        return try {
+            val docUrl = when {
+                did.startsWith("did:plc:") -> "https://plc.directory/$did"
+                did.startsWith("did:web:") -> {
+                    val domain = did.removePrefix("did:web:").replace(":", "/")
+                    "https://$domain/.well-known/did.json"
+                }
+                else -> return DEFAULT_PDS
+            }
+            val res = client.newCall(Request.Builder().url(docUrl).build()).execute()
+            if (!res.isSuccessful) return DEFAULT_PDS
+            val body = res.body?.string() ?: return DEFAULT_PDS
+            val services = JSONObject(body).optJSONArray("service") ?: return DEFAULT_PDS
+
+            for (i in 0 until services.length()) {
+                val svc = services.getJSONObject(i)
+                val id = svc.optString("id")
+                val type = svc.optString("type")
+                if (id == "#atproto_pds" || type == "AtprotoPersonalDataServer") {
+                    val endpoint = svc.optString("serviceEndpoint")
+                    if (endpoint.isNotBlank()) return endpoint.trimEnd('/')
+                }
+            }
+            DEFAULT_PDS
+        } catch (e: Exception) {
+            DEFAULT_PDS
+        }
+    }
+
+    /**
+     * تسجيل دخول كامل ودقيق: يحل الـ handle إلى DID، يكتشف خادمه الشخصي الحقيقي (قد يكون
+     * bsky.social أو أي خادم مستقل آخر)، ثم ينفّذ createSession على ذلك الخادم تحديداً -
+     * لا على bsky.social افتراضاً. لو كان المعرّف بريداً إلكترونياً (يحتوي @) بدل handle، لا
+     * يمكن اكتشاف الخادم مسبقاً فيُستخدم bsky.social كأفضل تخمين متاح.
+     */
+    fun login(identifier: String, password: String): LoginResult {
+        val pdsForLogin = if (identifier.contains("@")) {
+            DEFAULT_PDS
+        } else {
+            val did = resolveHandle(identifier)
+                ?: return LoginResult.Failure("تعذر العثور على الحساب (تحقق من صحة الهاندل)")
+            discoverPdsUrl(did)
+        }
+
+        return try {
+            val json = JSONObject().apply {
+                put("identifier", identifier)
+                put("password", password)
+            }
+            val body = json.toString().toRequestBody("application/json".toMediaType())
+            val req = Request.Builder()
+                .url("$pdsForLogin/xrpc/com.atproto.server.createSession")
+                .post(body)
+                .build()
+            val res = client.newCall(req).execute()
+            val resStr = res.body?.string() ?: ""
+
+            if (!res.isSuccessful) {
+                return LoginResult.Failure("فشل تسجيل الدخول على خادم $pdsForLogin (رمز ${res.code})")
+            }
+
+            val resJson = JSONObject(resStr)
+            LoginResult.Success(
+                handle = resJson.getString("handle"),
+                did = resJson.getString("did"),
+                pdsUrl = pdsForLogin,
+                accessJwt = resJson.getString("accessJwt"),
+                refreshJwt = resJson.optString("refreshJwt", "")
+            )
+        } catch (e: Exception) {
+            LoginResult.Failure("خطأ شبكة أثناء تسجيل الدخول: ${e.message}")
         }
     }
 
@@ -173,23 +270,19 @@ class BskyApi(
         var cursor: String? = null
 
         for (page in 0 until MAX_FEED_PAGES) {
+            // قراءة عامة عبر الـ AppView - لا تحتاج توثيق الحساب إطلاقاً، وبالتالي تعمل بنفس
+            // الدقة بغض النظر عن خادم (PDS) حساب البوت أو خادم الهدف نفسه.
             val url = StringBuilder(
-                "https://bsky.social/xrpc/app.bsky.feed.getAuthorFeed" +
+                "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed" +
                     "?actor=$targetDid&limit=$FEED_PAGE_SIZE&filter=posts_with_replies"
             )
             val c = cursor
             if (c != null) url.append("&cursor=").append(URLEncoder.encode(c, "UTF-8"))
 
-            val res = executeAuthorized(account) { jwt ->
-                Request.Builder()
-                    .url(url.toString())
-                    .addHeader("Authorization", "Bearer $jwt")
-                    .build()
-            }
+            val res = client.newCall(Request.Builder().url(url.toString()).build()).execute()
             val bodyStr = res.body?.string() ?: ""
 
             if (res.code == 429) return PostLookup.RateLimited
-            if (isAccountUnavailable(res.code)) return PostLookup.Unavailable(res.code)
             if (!res.isSuccessful) return PostLookup.OtherError(res.code)
 
             val json = JSONObject(bodyStr)
@@ -305,7 +398,7 @@ class BskyApi(
         val postBody = createRecordJson.toString().toRequestBody("application/json".toMediaType())
         return executeAuthorized(account) { jwt ->
             Request.Builder()
-                .url("https://bsky.social/xrpc/com.atproto.repo.createRecord")
+                .url("${account.pdsUrl}/xrpc/com.atproto.repo.createRecord")
                 .addHeader("Authorization", "Bearer $jwt")
                 .post(postBody)
                 .build()
