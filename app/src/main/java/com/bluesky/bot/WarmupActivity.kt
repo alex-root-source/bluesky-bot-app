@@ -30,6 +30,7 @@ class WarmupActivity : AppCompatActivity() {
     private var accountDids: ArrayList<String> = arrayListOf()
     private var accountJwts: ArrayList<String> = arrayListOf()
     private var accountRefreshJwts: ArrayList<String> = arrayListOf()
+    private var accountPdsUrls: ArrayList<String> = arrayListOf()
 
     private val checkboxes = mutableMapOf<String, CheckBox>()
 
@@ -66,6 +67,7 @@ class WarmupActivity : AppCompatActivity() {
         accountDids = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
         accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
         accountRefreshJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
+        accountPdsUrls = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_PDS_URLS) ?: arrayListOf()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -241,6 +243,10 @@ class WarmupActivity : AppCompatActivity() {
             putStringArrayListExtra(
                 WarmupEngagementService.EXTRA_ACCOUNT_REFRESH_JWTS,
                 ArrayList(indices.map { accountRefreshJwts.getOrElse(it) { "" } })
+            )
+            putStringArrayListExtra(
+                WarmupEngagementService.EXTRA_ACCOUNT_PDS_URLS,
+                ArrayList(indices.map { accountPdsUrls.getOrElse(it) { BskyApi.DEFAULT_PDS } })
             )
             putStringArrayListExtra(WarmupEngagementService.EXTRA_TARGET_HANDLES, ArrayList(targets))
             putStringArrayListExtra(WarmupEngagementService.EXTRA_COMMENTS, arrayListOf(comment))
