@@ -30,6 +30,7 @@ class MainActivity : AppCompatActivity() {
     private var accountDids: ArrayList<String> = arrayListOf()
     private var accountJwts: ArrayList<String> = arrayListOf()
     private var accountRefreshJwts: ArrayList<String> = arrayListOf()
+    private var accountPdsUrls: ArrayList<String> = arrayListOf()
 
     private lateinit var loggedInAsText: TextView
     private lateinit var logoutBtn: TextView
@@ -72,8 +73,10 @@ class MainActivity : AppCompatActivity() {
         accountDids = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS) ?: arrayListOf()
         accountJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS) ?: arrayListOf()
         accountRefreshJwts = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS) ?: arrayListOf()
+        accountPdsUrls = intent.getStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_PDS_URLS) ?: arrayListOf()
 
         if (accountHandles.isEmpty()) {
+            // لا توجد جلسة صالحة - رجّعه لشاشة الدخول
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
             return
@@ -98,6 +101,7 @@ class MainActivity : AppCompatActivity() {
         fabMain = findViewById(R.id.fabMain)
         fabWarmup = findViewById(R.id.fabWarmup)
 
+        // استرجاع آخر بيانات محفوظة (إن وجدت) حتى ما تضيع بين مرات فتح التطبيق
         BotPrefs.loadHandles(this)?.let { handlesInput.setText(it) }
         BotPrefs.loadExclude(this)?.let { excludeInput.setText(it) }
         BotPrefs.loadComment(this)?.let { commentInput.setText(it) }
@@ -118,6 +122,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         fabMain.setOnClickListener {
+            // الوضع الرئيسي: نفس منطق زر "بدء التفاعل" أدناه، اختصاراً سريعاً
             startBtn.performClick()
         }
 
@@ -127,6 +132,7 @@ class MainActivity : AppCompatActivity() {
                 putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_DIDS, accountDids)
                 putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_JWTS, accountJwts)
                 putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_REFRESH_JWTS, accountRefreshJwts)
+                putStringArrayListExtra(LoginActivity.EXTRA_ACCOUNT_PDS_URLS, accountPdsUrls)
             }
             startActivity(warmupIntent)
         }
@@ -192,6 +198,7 @@ class MainActivity : AppCompatActivity() {
                 maxRepliesInput.text.toString()
             )
 
+            // إزالة الحسابات المعطّلة بشكل دائم من قائمة حسابات البوت المستخدمة هذه الجلسة
             val disabledBots = BotPrefs.getDisabledAccounts(this)
             val activeIndices = accountHandles.indices.filter { accountHandles[it] !in disabledBots }
             if (activeIndices.size < accountHandles.size) {
@@ -207,6 +214,9 @@ class MainActivity : AppCompatActivity() {
             val activeAccountRefreshJwts = ArrayList(activeIndices.map {
                 accountRefreshJwts.getOrElse(it) { "" }
             })
+            val activeAccountPdsUrls = ArrayList(activeIndices.map {
+                accountPdsUrls.getOrElse(it) { BskyApi.DEFAULT_PDS }
+            })
 
             val serviceIntent = Intent(this, EngagementService::class.java).apply {
                 action = EngagementService.ACTION_START
@@ -214,6 +224,7 @@ class MainActivity : AppCompatActivity() {
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_DIDS, activeAccountDids)
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_JWTS, activeAccountJwts)
                 putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_REFRESH_JWTS, activeAccountRefreshJwts)
+                putStringArrayListExtra(EngagementService.EXTRA_ACCOUNT_PDS_URLS, activeAccountPdsUrls)
                 putStringArrayListExtra(EngagementService.EXTRA_TARGET_HANDLES, ArrayList(handles))
                 putStringArrayListExtra(EngagementService.EXTRA_COMMENTS, ArrayList(comments))
                 putStringArrayListExtra(EngagementService.EXTRA_EXCLUDED_HANDLES, ArrayList(excludedSet))
@@ -246,6 +257,7 @@ class MainActivity : AppCompatActivity() {
             accountDids = arrayListOf()
             accountJwts = arrayListOf()
             accountRefreshJwts = arrayListOf()
+            accountPdsUrls = arrayListOf()
 
             startActivity(Intent(this, LoginActivity::class.java))
             finish()
@@ -255,7 +267,11 @@ class MainActivity : AppCompatActivity() {
     /** يحفظ كل الحسابات المسجّلة دخولها في مخزن "الحسابات المعروفة" حتى يقدر الفحص الدوري بالخلفية يفحصها. */
     private fun rememberAllAccounts() {
         accountHandles.indices.forEach { i ->
-            BotPrefs.rememberAccount(this, accountHandles[i], accountRefreshJwts.getOrElse(i) { "" })
+            BotPrefs.rememberAccount(
+                this, accountHandles[i],
+                accountRefreshJwts.getOrElse(i) { "" },
+                accountPdsUrls.getOrElse(i) { BskyApi.DEFAULT_PDS }
+            )
         }
     }
 
@@ -278,6 +294,15 @@ class MainActivity : AppCompatActivity() {
         logText.append("[$time] $msg\n")
     }
 
+    /**
+     * يحوّل أي صيغة مكتوبة (رابط كامل، بـ @، بأحرف كبيرة...) إلى هاندل نظيف موحّد،
+     * حتى تقدر المقارنة والفلترة (تكرار/استبعاد) تشتغل بشكل صحيح.
+     * أمثلة تدخل كلها لنفس النتيجة "micheeel.bsky.social":
+     *   - "https://bsky.app/profile/micheeel.bsky.social"
+     *   - "https://bsky.app/profile/micheeel.bsky.social/post/xyz"
+     *   - "@Micheeel.bsky.social"
+     *   - "  micheeel.bsky.social  "
+     */
     private fun normalizeHandle(raw: String): String {
         var h = raw.trim()
         if (h.isEmpty()) return ""
