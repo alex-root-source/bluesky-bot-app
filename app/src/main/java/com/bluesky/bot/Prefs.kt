@@ -19,8 +19,8 @@ import java.util.Locale
  *    مشترك بين الوضعين حتى لا يعلّق وضع الإحماء على من عُلّق عليه من الوضع الرئيسي والعكس).
  * 4. قائمة الحسابات "المعطّلة" بشكل دائم + سجل تفصيلي بالسبب والوقت + إعادة تفعيل يدوية.
  * 5. سجل مختصر لآخر الجلسات.
- * 6. حسابات "معروفة" (هاندل + refreshJwt) يستخدمها الفحص الدوري في الخلفية للتأكد من
- *    سلامة الحسابات حتى بدون تشغيل أي جلسة.
+ * 6. حسابات "معروفة" (هاندل + refreshJwt + خادمها الشخصي PDS) يستخدمها الفحص الدوري في
+ *    الخلفية للتأكد من سلامة الحسابات حتى بدون تشغيل أي جلسة.
  * 7. حالة وضع الإحماء لكل حساب (تاريخ البدء + عدد تعليقات اليوم) لتطبيق سقف تدريجي.
  */
 object BotPrefs {
@@ -302,35 +302,53 @@ object BotPrefs {
     }
 
     // ---------------------------------------------------------------------
-    // حسابات معروفة (هاندل + refreshJwt) - للفحص الدوري بالخلفية
+    // حسابات معروفة (هاندل + refreshJwt + خادمه الشخصي PDS) - للفحص الدوري بالخلفية
     // ---------------------------------------------------------------------
 
-    /** يحفظ/يحدّث refreshJwt لحساب معروف (يُستدعى بعد كل تسجيل دخول ناجح). */
-    fun rememberAccount(context: Context, handle: String, refreshJwt: String) {
+    data class KnownAccount(val refreshJwt: String, val pdsUrl: String)
+
+    /** يحفظ/يحدّث refreshJwt وخادم الحساب (PDS) لحساب معروف (يُستدعى بعد كل تسجيل دخول ناجح). */
+    fun rememberAccount(context: Context, handle: String, refreshJwt: String, pdsUrl: String) {
         if (refreshJwt.isBlank()) return
         val p = prefs(context)
         val current = readKnownAccounts(p).toMutableMap()
-        current[handle] = refreshJwt
+        current[handle] = KnownAccount(refreshJwt, pdsUrl)
         p.edit().putString(KEY_KNOWN_ACCOUNTS, writeKnownAccounts(current)).apply()
     }
 
-    fun getKnownAccounts(context: Context): Map<String, String> = readKnownAccounts(prefs(context))
+    fun getKnownAccounts(context: Context): Map<String, KnownAccount> = readKnownAccounts(prefs(context))
 
-    private fun readKnownAccounts(p: SharedPreferences): Map<String, String> {
+    private fun readKnownAccounts(p: SharedPreferences): Map<String, KnownAccount> {
         val raw = p.getString(KEY_KNOWN_ACCOUNTS, null) ?: return emptyMap()
         return try {
             val obj = JSONObject(raw)
-            val map = LinkedHashMap<String, String>()
-            obj.keys().forEach { key -> map[key] = obj.getString(key) }
+            val map = LinkedHashMap<String, KnownAccount>()
+            obj.keys().forEach { key ->
+                val entry = obj.get(key)
+                map[key] = if (entry is JSONObject) {
+                    KnownAccount(
+                        refreshJwt = entry.getString("refreshJwt"),
+                        pdsUrl = entry.optString("pdsUrl", "https://bsky.social")
+                    )
+                } else {
+                    // توافق مع تنسيق قديم كان يخزّن refreshJwt كنص مباشر بلا pdsUrl
+                    KnownAccount(refreshJwt = entry.toString(), pdsUrl = "https://bsky.social")
+                }
+            }
             map
         } catch (e: Exception) {
             emptyMap()
         }
     }
 
-    private fun writeKnownAccounts(map: Map<String, String>): String {
+    private fun writeKnownAccounts(map: Map<String, KnownAccount>): String {
         val obj = JSONObject()
-        map.forEach { (k, v) -> obj.put(k, v) }
+        map.forEach { (handle, acc) ->
+            obj.put(handle, JSONObject().apply {
+                put("refreshJwt", acc.refreshJwt)
+                put("pdsUrl", acc.pdsUrl)
+            })
+        }
         return obj.toString()
     }
 
