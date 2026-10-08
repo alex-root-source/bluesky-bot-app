@@ -24,13 +24,16 @@ class AccountHealthCheckWorker(
         val client = OkHttpClient()
         val api = BskyApi(client) { /* لا حاجة لسجل مرئي هنا، الفحص صامت */ }
 
-        val known = BotPrefs.getKnownAccounts(context)
+        val knownAccounts = BotPrefs.getKnownAccounts(context)
         val disabled = BotPrefs.getDisabledAccounts(context)
 
-        known.forEach { (handle, refreshJwt) ->
+        knownAccounts.forEach { (handle, known) ->
             if (handle in disabled) return@forEach
 
-            val session = BskyApi.AccountSession(handle = handle, did = "", jwt = "", refreshJwt = refreshJwt)
+            val session = BskyApi.AccountSession(
+                handle = handle, did = "", jwt = "",
+                refreshJwt = known.refreshJwt, pdsUrl = known.pdsUrl
+            )
             val ok = try {
                 api.refreshAccountSession(session)
             } catch (e: Exception) {
@@ -39,7 +42,7 @@ class AccountHealthCheckWorker(
 
             if (ok) {
                 // التوكن الجديد غالباً مختلف (rotating refresh token) - نحدّث المحفوظ
-                BotPrefs.rememberAccount(context, handle, session.refreshJwt)
+                BotPrefs.rememberAccount(context, handle, session.refreshJwt, known.pdsUrl)
             } else {
                 AccountAlerts.exclude(
                     context, handle,
