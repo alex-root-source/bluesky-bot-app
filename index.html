@@ -185,6 +185,46 @@
         }
     }
 
+    // يجلب صفحة JSON واحدة، مع إعادة محاولة تلقائية عند تجاوز الحد المسموح (429)
+    async function fetchJson(url, label) {
+        for (let attempt = 0; attempt < 5; attempt++) {
+            const res = await fetch(url);
+            if (res.status === 429) {
+                const retryAfter = parseInt(res.headers.get('retry-after') || '', 10);
+                const waitSec = Number.isFinite(retryAfter) ? retryAfter : 3 * (attempt + 1);
+                addLog(`⏳ ${label}: تجاوز الحد المسموح، انتظار ${waitSec} ثانية...`);
+                await new Promise(r => setTimeout(r, waitSec * 1000));
+                continue;
+            }
+            if (!res.ok) {
+                throw new Error(`${label}: رمز الخطأ ${res.status}`);
+            }
+            return await res.json();
+        }
+        throw new Error(`${label}: استمر تجاوز الحد المسموح بعد عدة محاولات`);
+    }
+
+    // يمرّ على كل صفحات القائمة عبر الـ cursor حتى تنتهي (الحد الأقصى للصفحة الواحدة 100 عنصر)
+    // ويرجع مصفوفة بكل الهاندلات التي وجدها (قد تحتوي تكراراً، يُزال لاحقاً بالـ Set)
+    async function collectAll(endpoint, atUri, label, extractHandles) {
+        const MAX_PAGES = 300;
+        const all = [];
+        let cursor = null;
+        for (let page = 1; page <= MAX_PAGES; page++) {
+            let url = `https://public.api.bsky.app/xrpc/${endpoint}?uri=${encodeURIComponent(atUri)}&limit=100`;
+            if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
+
+            const data = await fetchJson(url, label);
+            const handles = extractHandles(data).filter(Boolean);
+            all.push(...handles);
+            addLog(`${label}: تم جلب ${all.length} حتى الآن...`);
+
+            cursor = data.cursor;
+            if (!cursor || handles.length === 0) break;
+        }
+        return all;
+    }
+
     async function fetchUsers() {
         const rawUrl = document.getElementById('postUrl').value.trim();
         if (!rawUrl) {
@@ -198,47 +238,76 @@
         try {
             let atUri = rawUrl;
 
-            // تحويل رابط الويب إلى AT URI
-            if (rawUrl.includes('bsky.app/profile/')) {
-                const parts = rawUrl.split('/post/');
-                if (parts.length === 2) {
-                    const handleOrDid = parts[0].split('/').pop();
-                    const postId = parts[1].split('?')[0];
-
-                    const resolveRes = await fetch(`https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${handleOrDid}`);
-                    if (resolveRes.ok) {
-                        const resolveData = await resolveRes.json();
-                        atUri = `at://${resolveData.did}/app.bsky.feed.post/${postId}`;
-                    }
+            // تحويل رابط الويب إلى AT URI - يتجاهل أي لاحقة بعد رمز المنشور
+            // مثل /quotes أو /reposts أو /liked-by أو ?query
+            if (!rawUrl.startsWith('at://')) {
+                const m = rawUrl.match(/profile\/([^\/?#]+)\/post\/([^\/?#]+)/);
+                if (!m) {
+                    addLog('❌ تعذر فهم رابط المنشور. تأكد أنه بصيغة: https://bsky.app/profile/.../post/...');
+                    return;
                 }
+
+                let did = decodeURIComponent(m[1]);
+                const rkey = m[2];
+
+                if (!did.startsWith('did:')) {
+                    const resolveRes = await fetch(`https://bsky.social/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(did)}`);
+                    if (!resolveRes.ok) {
+                        addLog('❌ تعذر العثور على صاحب المنشور. تأكد من صحة الرابط.');
+                        return;
+                    }
+                    did = (await resolveRes.json()).did;
+                }
+                atUri = `at://${did}/app.bsky.feed.post/${rkey}`;
             }
 
             const uniqueHandles = new Set();
-            const headers = accessJwt ? { 'Authorization': `Bearer ${accessJwt}` } : {};
+            let invalidCount = 0;
+            const counts = { reposts: 0, quotes: 0, likes: 0 };
 
-            // 1. جلب Reposts
-            const repostRes = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getRepostedBy?uri=${encodeURIComponent(atUri)}&limit=100`, { headers });
-            if (repostRes.ok) {
-                const repostData = await repostRes.json();
-                (repostData.repostedBy || []).forEach(u => {
-                    if (u.handle) uniqueHandles.add(u.handle);
-                });
-            }
+            const sources = [
+                {
+                    key: 'reposts', label: 'إعادة النشر',
+                    endpoint: 'app.bsky.feed.getRepostedBy',
+                    extract: d => (d.repostedBy || []).map(u => u.handle)
+                },
+                {
+                    key: 'quotes', label: 'الاقتباسات',
+                    endpoint: 'app.bsky.feed.getQuotes',
+                    extract: d => (d.posts || []).map(p => p.author && p.author.handle)
+                },
+                {
+                    key: 'likes', label: 'الإعجابات',
+                    endpoint: 'app.bsky.feed.getLikes',
+                    extract: d => (d.likes || []).map(l => l.actor && l.actor.handle)
+                }
+            ];
 
-            // 2. جلب Likes
-            const likeRes = await fetch(`https://bsky.social/xrpc/app.bsky.feed.getLikes?uri=${encodeURIComponent(atUri)}&limit=100`, { headers });
-            if (likeRes.ok) {
-                const likeData = await likeRes.json();
-                (likeData.likes || []).forEach(l => {
-                    if (l.actor && l.actor.handle) uniqueHandles.add(l.actor.handle);
-                });
+            for (const src of sources) {
+                try {
+                    const handles = await collectAll(src.endpoint, atUri, src.label, src.extract);
+                    counts[src.key] = handles.length;
+                    handles.forEach(h => {
+                        // الحسابات ذات الهاندل المعطوب لا يمكن التعليق عليها بالاسم
+                        if (h === 'handle.invalid') {
+                            invalidCount++;
+                        } else {
+                            uniqueHandles.add(h);
+                        }
+                    });
+                } catch (e) {
+                    addLog(`⚠️ فشل جلب ${src.label}: ${e.message}`);
+                }
             }
 
             if (uniqueHandles.size > 0) {
                 const resultList = Array.from(uniqueHandles).join('\n');
                 document.getElementById('resultHandles').value = resultList;
                 document.getElementById('copyBtn').style.display = 'block';
-                addLog(`تم استخراج ${uniqueHandles.size} حساب فريد بدون تكرار!`);
+                addLog(`تم استخراج ${uniqueHandles.size} حساب فريد بدون تكرار! (إعادة نشر: ${counts.reposts} | اقتباس: ${counts.quotes} | إعجاب: ${counts.likes})`);
+                if (invalidCount > 0) {
+                    addLog(`ℹ️ تم تخطي ${invalidCount} حساب بهاندل غير صالح.`);
+                }
             } else {
                 addLog('لم يتم العثور على أي تفاعلات أو حسابات لهذا المنشور.');
             }
@@ -259,4 +328,4 @@
 </script>
 
 </body>
-</html>
+    </html>
