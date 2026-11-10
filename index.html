@@ -133,6 +133,19 @@
         <button id="copyBtn" class="btn-success" onclick="copyResults()" style="display:none;">نسخ القائمة</button>
     </div>
 
+    <!-- قسم سحب المتابَعين -->
+    <div class="card">
+        <label>حساب لسحب كل من يتابعهم (هاندل أو رابط البروفايل):</label>
+        <input type="text" id="followsInput" placeholder="مثال: user.bsky.social">
+
+        <button id="followsBtn" onclick="fetchFollows()">سحب الحسابات التي يتابعها</button>
+
+        <label style="margin-top: 10px;">قائمة المتابَعين المستخرجة:</label>
+        <textarea id="resultFollows" rows="6" readonly placeholder="ستظهر الحسابات هنا..."></textarea>
+
+        <button id="copyFollowsBtn" class="btn-success" onclick="copyResults('resultFollows')" style="display:none;">نسخ القائمة</button>
+    </div>
+
     <!-- سجل العمليات -->
     <div class="log-box" id="logs">
         [النظام] جاهز للعمل...
@@ -206,12 +219,12 @@
 
     // يمرّ على كل صفحات القائمة عبر الـ cursor حتى تنتهي (الحد الأقصى للصفحة الواحدة 100 عنصر)
     // ويرجع مصفوفة بكل الهاندلات التي وجدها (قد تحتوي تكراراً، يُزال لاحقاً بالـ Set)
-    async function collectAll(endpoint, atUri, label, extractHandles) {
+    async function collectAll(endpoint, paramName, paramValue, label, extractHandles) {
         const MAX_PAGES = 300;
         const all = [];
         let cursor = null;
         for (let page = 1; page <= MAX_PAGES; page++) {
-            let url = `https://public.api.bsky.app/xrpc/${endpoint}?uri=${encodeURIComponent(atUri)}&limit=100`;
+            let url = `https://public.api.bsky.app/xrpc/${endpoint}?${paramName}=${encodeURIComponent(paramValue)}&limit=100`;
             if (cursor) url += `&cursor=${encodeURIComponent(cursor)}`;
 
             const data = await fetchJson(url, label);
@@ -285,7 +298,7 @@
 
             for (const src of sources) {
                 try {
-                    const handles = await collectAll(src.endpoint, atUri, src.label, src.extract);
+                    const handles = await collectAll(src.endpoint, 'uri', atUri, src.label, src.extract);
                     counts[src.key] = handles.length;
                     handles.forEach(h => {
                         // الحسابات ذات الهاندل المعطوب لا يمكن التعليق عليها بالاسم
@@ -319,8 +332,61 @@
         }
     }
 
-    function copyResults() {
-        const resultText = document.getElementById('resultHandles');
+    // يقبل هاندل عادي، أو @هاندل، أو رابط بروفايل كامل، أو DID
+    function normalizeActor(raw) {
+        let a = raw.trim();
+        const m = a.match(/profile\/([^\/?#]+)/);
+        if (m) a = decodeURIComponent(m[1]);
+        a = a.replace(/^@/, '').trim();
+        return a.startsWith('did:') ? a : a.toLowerCase();
+    }
+
+    async function fetchFollows() {
+        const actor = normalizeActor(document.getElementById('followsInput').value);
+        if (!actor) {
+            alert('يرجى إدخال اسم الحساب');
+            return;
+        }
+
+        addLog(`جاري سحب كل الحسابات التي يتابعها ${actor}...`);
+        document.getElementById('followsBtn').disabled = true;
+
+        try {
+            const handles = await collectAll(
+                'app.bsky.graph.getFollows', 'actor', actor, 'المتابَعون',
+                d => (d.follows || []).map(f => f.handle)
+            );
+
+            const unique = new Set();
+            let invalidCount = 0;
+            handles.forEach(h => {
+                // الحسابات ذات الهاندل المعطوب لا يمكن التعليق عليها بالاسم
+                if (h === 'handle.invalid') {
+                    invalidCount++;
+                } else {
+                    unique.add(h);
+                }
+            });
+
+            if (unique.size > 0) {
+                document.getElementById('resultFollows').value = Array.from(unique).join('\n');
+                document.getElementById('copyFollowsBtn').style.display = 'block';
+                addLog(`تم استخراج ${unique.size} حساب يتابعهم ${actor}!`);
+                if (invalidCount > 0) {
+                    addLog(`ℹ️ تم تخطي ${invalidCount} حساب بهاندل غير صالح.`);
+                }
+            } else {
+                addLog('لم يتم العثور على أي حسابات يتابعها هذا الحساب.');
+            }
+        } catch (e) {
+            addLog('❌ خطأ أثناء سحب المتابَعين: ' + e.message + ' (تأكد من صحة اسم الحساب)');
+        } finally {
+            document.getElementById('followsBtn').disabled = false;
+        }
+    }
+
+    function copyResults(id = 'resultHandles') {
+        const resultText = document.getElementById(id);
         resultText.select();
         document.execCommand('copy');
         alert('تم نسخ القائمة إلى الحافظة بنجاح!');
